@@ -223,6 +223,10 @@ export async function getCallCountToday(address: string): Promise<number> {
   } catch { return 0 }
 }
 
+export async function recordSurvivalDay(client: GenLayerClient, dayNumber: number): Promise<void> {
+  await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'record_survival_day', [dayNumber])
+}
+
 export async function submitPlayerStats(
   client: GenLayerClient,
   statsJson: string,

@@ -51,7 +51,11 @@ export function useChainActions() {
       store.setTxStatus(true, 'Validating recipe on-chain...')
       try {
         const client = createWriteClient(store.walletAddress)
-        const delta = await craftItem(client, recipeId, station, quantity)
+        // Pass the physical station tile coordinates so the contract can verify the
+        // station is actually placed at that location.  HAND recipes use (0,0).
+        const sx = store.craftingStationX
+        const sy = store.craftingStationY
+        const delta = await craftItem(client, recipeId, station, quantity, sx, sy)
 
         window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
         store.closeCrafting()
@@ -216,14 +220,25 @@ export function useChainActions() {
           reasoning: result.reasoning,
         }
 
+        // Snapshot the oracle's full inventory delta (includes both gains and losses)
+        // BEFORE calling apply_inventory_delta on-chain.  The contract only persists
+        // losses (positive rewards are reserved for a future oracle-auth path), and it
+        // returns { applied_delta, inventory, ... } — not the { deduct, grant } shape
+        // that inventoryDeltaFromAction expects.  Overwriting inventoryDelta with the
+        // return value would silently zero-out ALL inventory changes in the local event.
+        const oracleInventoryDelta = { ...delta.inventoryDelta }
+
         store.setTxStatus(true, 'Applying AI effect on-chain...')
-        const applied = await applyInventoryDeltaOnChain(
+        await applyInventoryDeltaOnChain(
           client,
           `${store.epochInfo?.currentEpoch ?? 0}-${result.event_name}`,
           delta.inventoryDelta,
           delta.xpDelta,
         )
-        delta.inventoryDelta = inventoryDeltaFromAction(applied)
+
+        // Restore the oracle's delta so the local game state reflects the full event
+        // (gains for good events are applied locally even if not yet on-chain).
+        delta.inventoryDelta = oracleInventoryDelta
 
         if (delta.houseDamaged && store.houses.length > 0) {
           await applyHouseEvent(

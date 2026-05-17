@@ -21,6 +21,12 @@ interface PendingRegistration {
   seed: number
 }
 
+interface PendingSignIn {
+  address: string
+  seed: number
+  name: string
+}
+
 function friendlyWalletError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const lower = raw.toLowerCase()
@@ -81,7 +87,8 @@ async function ensureStudionet() {
 export function useWallet() {
   const { setWallet, clearWallet } = useGameStore()
   const [pendingRegistration, setPendingRegistration] = useState<PendingRegistration | null>(null)
-  const [connecting, setConnecting] = useState(false)
+  const [pendingSignIn, setPendingSignIn]             = useState<PendingSignIn | null>(null)
+  const [connecting, setConnecting]                   = useState(false)
 
   async function mirrorPlayer(address: string, playerName: string) {
     upsertPlayer({
@@ -94,6 +101,7 @@ export function useWallet() {
     }).catch(() => { /* best-effort */ })
   }
 
+  // ── Step 1: Connect wallet + check registration ────────────────────────────
   async function connect() {
     if (!window.ethereum) {
       toast.error('No EVM wallet found. Install or enable a browser wallet to play GenSurvival.')
@@ -110,23 +118,23 @@ export function useWallet() {
       const seed = getOrCreateSeed(address)
       const registered = await isRegistered(address)
 
-      // null = GenLayer RPC unreachable — don't show registration form or the
-      // player could accidentally double-register when the network recovers.
+      // null = GenLayer RPC unreachable — don't show any form; the player could
+      // accidentally double-register when the network recovers.
       if (registered === null) {
         toast.error('Could not reach GenLayer network. Check your connection and try again.')
         return
       }
 
       if (!registered) {
+        // New player — ask for a name, then sign the registration tx.
         setPendingRegistration({ address, seed })
         return
       }
 
+      // Existing player — require a MetaMask signature before granting access.
       const profile = await getProfile(address)
       const playerName = profile?.name ?? address.slice(0, 8)
-      setWallet(address, playerName, true, seed)
-      toast.success(`Welcome back, ${playerName}!`)
-      mirrorPlayer(address, playerName)
+      setPendingSignIn({ address, seed, name: playerName })
     } catch (err) {
       toast.error(`Wallet connect failed: ${friendlyWalletError(err)}`)
     } finally {
@@ -134,6 +142,41 @@ export function useWallet() {
     }
   }
 
+  // ── Step 2a (returning player): Sign a challenge message ──────────────────
+  async function signIn() {
+    if (!pendingSignIn || !window.ethereum) return
+
+    setConnecting(true)
+    try {
+      const { address, seed, name } = pendingSignIn
+      const message =
+        `Welcome to GenSurvival!\n\n` +
+        `Signing this message proves wallet ownership.\n` +
+        `No transaction is made and no gas is spent.\n\n` +
+        `Address: ${address}`
+
+      await window.ethereum.request({
+        method: 'personal_sign',
+        params: [message, address],
+      })
+
+      setWallet(address, name, true, seed)
+      setPendingSignIn(null)
+      toast.success(`Welcome back, ${name}!`)
+      mirrorPlayer(address, name)
+    } catch (err) {
+      toast.error(`Sign in failed: ${friendlyWalletError(err)}`)
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  function cancelSignIn() {
+    setPendingSignIn(null)
+    toast.info('Sign in cancelled.')
+  }
+
+  // ── Step 2b (new player): Choose name + sign registration tx ──────────────
   async function completeRegistration(playerName: string) {
     if (!pendingRegistration) return
 
@@ -145,7 +188,7 @@ export function useWallet() {
 
     setConnecting(true)
     try {
-      toast.info('Creating on-chain profile...')
+      toast.info('Creating on-chain profile — approve the transaction in your wallet...')
       const client = createWriteClient(pendingRegistration.address)
       await registerPlayer(client, name)
       setWallet(pendingRegistration.address, name, true, pendingRegistration.seed)
@@ -167,14 +210,18 @@ export function useWallet() {
   function disconnect() {
     clearWallet()
     setPendingRegistration(null)
+    setPendingSignIn(null)
     toast.info('Wallet disconnected.')
   }
 
   return {
     connect,
     disconnect,
+    signIn,
+    cancelSignIn,
     completeRegistration,
     cancelRegistration,
+    pendingSignIn,
     pendingRegistration,
     connecting,
   }

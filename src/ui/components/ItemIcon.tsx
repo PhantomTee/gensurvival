@@ -23,6 +23,16 @@ const FALLBACK: Partial<Record<ItemId, string>> = {
   FURNACE:     '#5f554e',
   HOUSE_DEED:  '#ebe0b2',
   COAL:        '#44434a',
+  APPLE:       '#e0443a',
+  XP_ORB:      '#88ddff',
+  BENCH:       '#a0733a',
+  TNT:         '#c03030',
+}
+
+// Some items exist in /assets/items/ under a different filename.
+const CUSTOM_FILENAMES: Partial<Record<ItemId, string>> = {
+  BENCH: 'bench_item',
+  TNT:   'tnt_item',
 }
 
 interface Props {
@@ -70,9 +80,11 @@ export function ItemIcon({ id, size = 28, style }: Props) {
     )
   }
 
+  const filename = CUSTOM_FILENAMES[id] ?? id.toLowerCase()
+
   return (
     <img
-      src={`/assets/items/${id.toLowerCase()}.png`}
+      src={`/assets/items/${filename}.png`}
       alt={label}
       title={label}
       style={{

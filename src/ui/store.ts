@@ -96,7 +96,9 @@ interface GameStore {
   craftingOpen: boolean
   craftingStation: CraftingStation
   craftingEntityId: number | null
-  openCrafting: (station: CraftingStation, entityId: number) => void
+  craftingStationX: number   // tile X of the physical station (0 for HAND)
+  craftingStationY: number   // tile Y of the physical station (0 for HAND)
+  openCrafting: (station: CraftingStation, entityId: number, stationX?: number, stationY?: number) => void
   closeCrafting: () => void
 
   inventoryOpen: boolean
@@ -154,8 +156,10 @@ export const useGameStore = create<GameStore>((set) => ({
   craftingOpen: false,
   craftingStation: 'HAND',
   craftingEntityId: null,
-  openCrafting: (craftingStation, craftingEntityId) =>
-    set({ craftingOpen: true, craftingStation, craftingEntityId }),
+  craftingStationX: 0,
+  craftingStationY: 0,
+  openCrafting: (craftingStation, craftingEntityId, craftingStationX = 0, craftingStationY = 0) =>
+    set({ craftingOpen: true, craftingStation, craftingEntityId, craftingStationX, craftingStationY }),
   closeCrafting: () => set({ craftingOpen: false }),
 
   inventoryOpen: false,

@@ -851,11 +851,15 @@ export class WorldScene extends Phaser.Scene {
       if (Math.sqrt(dx * dx + dy * dy) > range) continue
 
       if (e.type === 'BENCH') {
-        useGameStore.getState().openCrafting('BENCH', e.id)
+        const tx = Math.floor(e.x / TILE_SIZE)
+        const ty = Math.floor(e.y / TILE_SIZE)
+        useGameStore.getState().openCrafting('BENCH', e.id, tx, ty)
       } else if (e.type === 'CHEST') {
         useGameStore.getState().openChest(e.id)
       } else if (e.type === 'FURNACE') {
-        useGameStore.getState().openCrafting('FURNACE', e.id)
+        const tx = Math.floor(e.x / TILE_SIZE)
+        const ty = Math.floor(e.y / TILE_SIZE)
+        useGameStore.getState().openCrafting('FURNACE', e.id, tx, ty)
       } else if (e.type === 'BED') {
         // Sleep: skip to morning, restore health + energy
         // Real-time day cycle — skip to next dawn (next cycle boundary)

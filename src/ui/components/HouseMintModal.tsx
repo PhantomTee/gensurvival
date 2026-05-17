@@ -5,13 +5,19 @@ import { ITEMS } from '../../game/registry/ITEMS'
 import type { ItemId } from '../../game/registry/ITEMS'
 
 export function HouseMintModal() {
-  const prompt    = useGameStore((s) => s.houseMintPrompt)
-  const dismiss   = useGameStore((s) => s.dismissHouseMint)
-  const txPending = useGameStore((s) => s.txPending)
-  const txStatus  = useGameStore((s) => s.txStatus)
+  const prompt      = useGameStore((s) => s.houseMintPrompt)
+  const dismiss     = useGameStore((s) => s.dismissHouseMint)
+  const txPending   = useGameStore((s) => s.txPending)
+  const txStatus    = useGameStore((s) => s.txStatus)
+  // Always use the live inventory from playerStats — the prompt snapshot can be
+  // stale if the player crafted materials after the modal opened.
+  const liveInv     = useGameStore((s) => s.playerStats?.inventory ?? {})
   const { doMintHouse } = useChainActions()
 
   if (!prompt) return null
+
+  // Merge: live inventory takes precedence over the snapshot baked into prompt
+  const inventory = { ...prompt.inventory, ...liveInv }
 
   return (
     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
@@ -26,7 +32,7 @@ export function HouseMintModal() {
         <p className="text-gray-300 text-xs font-mono mb-1">Materials required:</p>
         <div className="flex gap-3 flex-wrap">
           {Object.entries(HOUSE_COST).map(([id, need]) => {
-            const have = prompt.inventory[id] ?? 0
+            const have = inventory[id] ?? 0
             const ok   = have >= need
             return (
               <span key={id} className={`text-xs font-mono px-2 py-1 rounded border

@@ -16,14 +16,17 @@ import { HouseMintModal }  from './ui/components/HouseMintModal'
 import { ToastContainer }  from './ui/components/Toast'
 import { useGameStore }    from './ui/store'
 import { useChainActions } from './ui/hooks/useChainActions'
-import { getPlayerState }  from './chain/contracts'
+import { getPlayerState, recordSurvivalDay } from './chain/contracts'
+import { createWriteClient } from './chain/client'
 
 function App() {
-  const canvasRef   = useRef<HTMLDivElement>(null)
-  const gameRef     = useRef<Phaser.Game | null>(null)
-  const screen      = useGameStore((s) => s.screen)
+  const canvasRef     = useRef<HTMLDivElement>(null)
+  const gameRef       = useRef<Phaser.Game | null>(null)
+  const screen        = useGameStore((s) => s.screen)
   const walletAddress = useGameStore((s) => s.walletAddress)
-  const chain       = useChainActions()
+  const dayNumber     = useGameStore((s) => s.playerStats?.dayNumber ?? 0)
+  const lastDayRef    = useRef(0)
+  const chain         = useChainActions()
 
   // ── Mount Phaser once ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -122,6 +125,20 @@ function App() {
     })
     return () => { cancelled = true }
   }, [walletAddress, screen])
+
+  // Record survival day on-chain whenever dayNumber increments (best-effort, non-blocking).
+  useEffect(() => {
+    if (!walletAddress || screen !== 'game') return
+    if (dayNumber > lastDayRef.current) {
+      const prev = lastDayRef.current
+      lastDayRef.current = dayNumber
+      // Don't fire on initial mount (prev === 0 means we haven't played yet)
+      if (prev > 0) {
+        const client = createWriteClient(walletAddress)
+        recordSurvivalDay(client, dayNumber).catch(() => { /* best-effort — ignore failures */ })
+      }
+    }
+  }, [dayNumber, walletAddress, screen])
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
