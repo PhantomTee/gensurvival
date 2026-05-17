@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@import "tailwindcss";
+
+/* ── Pixel font ─────────────────────────────────────────────────────────────── */
+
+/* ── Game-first reset ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  color: #e8d5a0;
+  image-rendering: pixelated;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* ── Pixel scrollbars — amber/dark RPG theme ────────────────────────────────── */
+/* Webkit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0e0700;
+  border-left: 1px solid #3a2500;
+}
+::-webkit-scrollbar-thumb {
+  background: #5a3d10;
+  border: 1px solid #8b6914;
+  image-rendering: pixelated;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8b6914;
+}
+::-webkit-scrollbar-corner {
+  background: #0e0700;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #5a3d10 #0e0700;
+}
