@@ -9,10 +9,12 @@ async function readContract<T>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   args: any[] = [],
 ): Promise<T> {
-  const result = await readClient.readContract({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (readClient as any).readContract({
     address: address as `0x${string}`,
     functionName: fn,
     args,
+    stateStatus: 'accepted', // read accepted state — no need to wait for finalization
   })
   return result as T
 }
@@ -31,7 +33,12 @@ async function writeContract(
     value: BigInt(0),
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const receipt = await (client as any).waitForTransactionReceipt({ hash })
+  const receipt = await (client as any).waitForTransactionReceipt({
+    hash,
+    status: 'FINALIZED',
+    interval: 2000,  // poll every 2 s instead of the 5 s default
+    retries: 60,     // up to 2 min total — enough for consensus
+  })
   return (receipt as { returnValue?: unknown }).returnValue
 }
 
@@ -194,13 +201,17 @@ export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 export async function getEpochInfo(): Promise<Omit<EpochInfo, 'callsToday'>> {
-  const raw = await readContract<string>(ADDRESSES.DISASTER_ORACLE, 'get_epoch_info', [])
-  const data = JSON.parse(raw)
-  return {
-    currentEpoch: data.current_epoch,
-    inWindow: data.in_window,
-    secondsUntilNextWindow: data.seconds_until_next_window,
-    windowEndTs: data.window_end,
+  try {
+    const raw = await readContract<string>(ADDRESSES.DISASTER_ORACLE, 'get_epoch_info', [])
+    const data = JSON.parse(raw)
+    return {
+      currentEpoch: data.current_epoch,
+      inWindow: data.in_window,
+      secondsUntilNextWindow: data.seconds_until_next_window,
+      windowEndTs: data.window_end,
+    }
+  } catch {
+    return { currentEpoch: 0, inWindow: false, secondsUntilNextWindow: 0, windowEndTs: 0 }
   }
 }
 

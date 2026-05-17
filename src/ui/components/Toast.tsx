@@ -11,7 +11,7 @@ const STYLES: Record<ToastMsg['type'], { border: string; text: string; bg: strin
 function ToastCard({ t, onDismiss }: { t: ToastMsg; onDismiss: () => void }) {
   const [visible, setVisible] = useState(false)
   const s = STYLES[t.type]
-  const lifetime = t.type === 'error' ? 5000 : 3500
+  const lifetime = t.type === 'error' ? 3000 : 2000
 
   useEffect(() => {
     requestAnimationFrame(() => setVisible(true))

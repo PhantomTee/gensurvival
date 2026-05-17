@@ -124,6 +124,7 @@ export class WorldScene extends Phaser.Scene {
   private chainPlaceConfirmedHandler: EventListener | null = null
   private keyDownHandler: EventListener | null = null
   private keyUpHandler: EventListener | null = null
+  private blurHandler: (() => void) | null = null
   private heldKeys = new Set<string>()
   private textInputFocused = false
 
@@ -230,6 +231,10 @@ export class WorldScene extends Phaser.Scene {
     }) as EventListener
     window.addEventListener('keydown', this.keyDownHandler)
     window.addEventListener('keyup', this.keyUpHandler)
+
+    // Clear all held keys when window loses focus — prevents stuck movement
+    this.blurHandler = () => { this.heldKeys.clear() }
+    window.addEventListener('blur', this.blurHandler)
 
     // ── Right-click to place tile items ──────────────────────────
     this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
@@ -1477,6 +1482,10 @@ export class WorldScene extends Phaser.Scene {
     if (this.keyUpHandler) {
       window.removeEventListener('keyup', this.keyUpHandler)
       this.keyUpHandler = null
+    }
+    if (this.blurHandler) {
+      window.removeEventListener('blur', this.blurHandler)
+      this.blurHandler = null
     }
     this.heldKeys.clear()
     this.doSave()
