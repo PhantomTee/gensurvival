@@ -665,7 +665,7 @@ export class WorldScene extends Phaser.Scene {
       // Drain energy for on-chain mining dispatch
       const enMine = this.player.components.energy!
       enMine.value = Math.max(0, enMine.value - 0.30)
-      window.dispatchEvent(new CustomEvent('gensurvival:mineTile', { detail: { x: tx, y: ty } }))
+      window.dispatchEvent(new CustomEvent('gensurvival:mineTile', { detail: { x: tx, y: ty, terrainType: tileId } }))
       return
     }
 

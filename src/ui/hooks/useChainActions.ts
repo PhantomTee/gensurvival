@@ -72,12 +72,12 @@ export function useChainActions() {
     })
   }
 
-  async function doMineTile(x: number, y: number) {
+  async function doMineTile(x: number, y: number, terrainType: string) {
     return withWallet('Connect your wallet to mine on-chain.', async () => {
       store.setTxStatus(true, 'Mining tile on-chain...')
       try {
         const client = createWriteClient(store.walletAddress)
-        const delta = await mineTile(client, x, y)
+        const delta = await mineTile(client, x, y, terrainType)
         window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
         window.dispatchEvent(new CustomEvent('gensurvival:chainMineConfirmed', { detail: { x, y, delta } }))
         store.setTxStatus(false, '')

@@ -80,8 +80,8 @@ function App() {
 
   useEffect(() => {
     const handleMineTile = ((e: CustomEvent) => {
-      const { x, y } = e.detail as { x: number; y: number }
-      void chain.doMineTile(x, y)
+      const { x, y, terrainType } = e.detail as { x: number; y: number; terrainType: string }
+      void chain.doMineTile(x, y, terrainType)
     }) as EventListener
 
     const handleChopTree = ((e: CustomEvent) => {
@@ -128,6 +128,9 @@ function App() {
       {/* Phaser canvas container */}
       <div ref={canvasRef} style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }} />
 
+      {/* WalletBadge — always visible so the user can connect from the main menu */}
+      <WalletBadge />
+
       {/* React UI overlay — pointer-events are managed per-component */}
       {screen === 'game' && (
         <div style={{
@@ -135,7 +138,6 @@ function App() {
           pointerEvents: 'none', zIndex: 10,
         }}>
           <HUDBar />
-          <WalletBadge />
           <EpochTimer />
 
           {/* Controls hint — bottom-left */}

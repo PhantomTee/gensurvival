@@ -98,8 +98,8 @@ export async function getPlayerState(address: string): Promise<PlayerChainState 
   } catch { return null }
 }
 
-export async function mineTile(client: GenLayerClient, x: number, y: number): Promise<ActionDelta> {
-  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'mine_tile', [x, y]) as string
+export async function mineTile(client: GenLayerClient, x: number, y: number, terrainType: string): Promise<ActionDelta> {
+  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'mine_tile', [x, y, terrainType]) as string
   return JSON.parse(raw) as ActionDelta
 }
 

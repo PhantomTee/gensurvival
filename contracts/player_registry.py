@@ -287,16 +287,17 @@ class GenSurvivalGame(gl.Contract):
     # ── World actions ─────────────────────────────────────────────────────────
 
     @gl.public.write
-    def mine_tile(self, x: int, y: int) -> str:
+    def mine_tile(self, x: int, y: int, terrain_type: str) -> str:
+        # terrain_type is supplied by the client (the client's WorldGenerator is
+        # authoritative for tile layout since it uses simplex-noise which cannot
+        # be reproduced cheaply on-chain). We validate it's a known mineable type.
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.mined_tiles, "Tile already mined"
+        assert terrain_type in MINEABLE_DROPS, "Tile is not mineable"
 
-        terrain = self._terrain_at(0, int(x), int(y))
-        assert terrain in MINEABLE_DROPS, "Tile is not mineable"
-
-        drop  = MINEABLE_DROPS[terrain]
+        drop  = MINEABLE_DROPS[terrain_type]
         state = self._get_state(addr_hex)
         grant = {drop: 1}
         self._grant_items(state, grant)
@@ -308,11 +309,12 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def chop_tree(self, x: int, y: int) -> str:
+        # Tree presence is validated client-side (simplex-noise world cannot be
+        # reproduced on-chain). The contract enforces one-chop-per-coordinate only.
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.chopped_trees, "Tree already chopped"
-        assert self._tree_at(0, int(x), int(y)), "No canonical tree at coordinate"
 
         state = self._get_state(addr_hex)
         grant = {"WOOD_LOG": 3}
