@@ -89,6 +89,19 @@ export class BootScene extends Phaser.Scene {
         canvas.height = 16
         const ctx = canvas.getContext('2d')!
 
+        // ── PNG-backed rock: draw the real tile_rock.png, tint per variant ────
+        // Avoid getImageData (canvas-taint risk) — use composite overlay instead.
+        if (id === 'rock') {
+          const src = this.textures.get('_tile_raw_rock').getSourceImage() as HTMLImageElement | HTMLCanvasElement
+          ctx.drawImage(src, 0, 0, 16, 16)
+          // v0 = original, v1 = slightly darker, v2 = slightly lighter, v3 = darker
+          if (v === 1) { ctx.fillStyle = 'rgba(0,0,0,0.10)';       ctx.fillRect(0, 0, 16, 16) }
+          if (v === 2) { ctx.fillStyle = 'rgba(255,255,255,0.08)';  ctx.fillRect(0, 0, 16, 16) }
+          if (v === 3) { ctx.fillStyle = 'rgba(0,0,0,0.06)';        ctx.fillRect(0, 0, 16, 16) }
+          this.textures.addCanvas(`tile_rock_${v}`, canvas)
+          continue
+        }
+
         // Fill with flat base colour — no PNG pattern artefacts
         const [br, bg, bb] = TILE_BASE[id] ?? [128, 128, 128]
         const imgd = ctx.createImageData(16, 16)
