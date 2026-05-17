@@ -428,12 +428,22 @@ class GenSurvivalGame(gl.Contract):
                     floor_count += 1
         return floor_count > 0
 
+    # Material cost for minting a house — must match RECIPES["house_deed"]["inputs"]
+    HOUSE_MATERIAL_COST = {
+        "WOOD_PLANK": 40, "STONE": 30, "WOOD_WALL": 16,
+        "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5,
+    }
+
     @gl.public.write
     def mint_house(self, x: int, y: int, width: int, height: int, name: str) -> u256:
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
         assert self._is_house_shape(addr_hex, int(x), int(y), int(width), int(height)), "No complete on-chain house at coordinates"
         assert self._house_not_claimed(addr_hex, int(x), int(y), int(width), int(height)), "House footprint already minted"
+
+        # Validate and deduct materials atomically — prevents minting without paying
+        state = self._get_state(addr_hex)
+        self._deduct_items(state, self.HOUSE_MATERIAL_COST, 1)
 
         house_id              = self.next_house_id
         self.next_house_id    = self.next_house_id + u256(1)
@@ -455,7 +465,8 @@ class GenSurvivalGame(gl.Contract):
         owned.append(int(house_id))
         self.owner_houses[addr_hex] = json.dumps(owned, sort_keys=True)
 
-        state = self._get_state(addr_hex)
+        # Reuse the already-deducted state rather than fetching fresh (which would
+        # undo the material deduction that happened above)
         state["house_count"] = len(owned)
         state["xp"]          = int(state.get("xp", 0)) + 50
         self._save_state(addr_hex, state)
@@ -531,8 +542,9 @@ class GenSurvivalGame(gl.Contract):
         # Case-insensitive owner check (GenLayer may return mixed-case addresses)
         assert meta["owner"].lower() == addr_hex.lower(), "Only the house owner can update its state"
 
-        # ── Replay protection ────────────────────────────────────────────────
-        used_key = addr_hex + ":" + event_id + ":house"
+        # ── Replay protection — keyed per house so the same event can affect
+        # each of the player's houses independently (once per house, not once total)
+        used_key = addr_hex + ":" + event_id + ":house:" + str(int(house_id))
         assert used_key not in self.used_ai_events, "Event already applied to this house"
 
         # ── Disaster-only constraints ────────────────────────────────────────

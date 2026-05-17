@@ -15,7 +15,7 @@ function itemIconUrl(id: ItemId): string {
   return `/assets/items/${id.toLowerCase()}.png`
 }
 
-const EQUIPPABLE_TAGS = new Set(['WEAPON', 'RANGED', 'TOOL_AXE', 'TOOL_PICK', 'TOOL_SHOVEL', 'TOOL_HOE', 'PLACEABLE', 'FOOD'])
+const EQUIPPABLE_TAGS = new Set(['WEAPON', 'RANGED', 'TOOL_AXE', 'TOOL_PICK', 'TOOL_SHOVEL', 'TOOL_HOE', 'TOOL_ROD', 'PLACEABLE', 'FOOD'])
 
 function isEquippable(id: ItemId): boolean {
   const def = ITEMS[id]

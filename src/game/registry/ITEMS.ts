@@ -18,7 +18,7 @@ export type ItemId =
   // Special — triggers on-chain house minting when "crafted"
   | 'HOUSE_DEED'
 
-export type ItemTag = 'WEAPON' | 'RANGED' | 'TOOL_AXE' | 'TOOL_PICK' | 'TOOL_SHOVEL' | 'TOOL_HOE' | 'PLACEABLE' | 'RESOURCE' | 'FOOD'
+export type ItemTag = 'WEAPON' | 'RANGED' | 'TOOL_AXE' | 'TOOL_PICK' | 'TOOL_SHOVEL' | 'TOOL_HOE' | 'TOOL_ROD' | 'PLACEABLE' | 'RESOURCE' | 'FOOD'
 
 export interface GunStats {
   projectileSpeed: number  // px/s
@@ -78,7 +78,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   FISH:          { id:'FISH',          displayName:'Fish',          tags:['FOOD'],      stackable:true,  maxStack:16, iconIndex:28, healEnergy:6, healHealth:1 },
   SEEDS:         { id:'SEEDS',         displayName:'Seeds',         tags:['RESOURCE'],  stackable:true,  maxStack:32, iconIndex:29 },
   WHEAT:         { id:'WHEAT',         displayName:'Wheat',         tags:['RESOURCE'],  stackable:true,  maxStack:32, iconIndex:30 },
-  FISHING_ROD:   { id:'FISHING_ROD',   displayName:'Fishing Rod',   tags:['TOOL_HOE'],  stackable:false, maxStack:1,  iconIndex:31 },
+  FISHING_ROD:   { id:'FISHING_ROD',   displayName:'Fishing Rod',   tags:['TOOL_ROD'],  stackable:false, maxStack:1,  iconIndex:31 },
   BED:           { id:'BED',           displayName:'Bed',           tags:['PLACEABLE'], stackable:false, maxStack:1,  placesEntity:'BED', iconIndex:32 },
 
   BULLET:  { id:'BULLET',  displayName:'Bullet',  tags:['RESOURCE'], stackable:true,  maxStack:64, iconIndex:33 },

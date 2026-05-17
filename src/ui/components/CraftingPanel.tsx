@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useGameStore } from '../store'
 import { RECIPES, type RecipeDef } from '../../game/registry/RECIPES'
 import { ITEMS } from '../../game/registry/ITEMS'
+import { ItemIcon } from './ItemIcon'
 import { useChainActions } from '../hooks/useChainActions'
 
 export function CraftingPanel() {
@@ -99,9 +100,8 @@ export function CraftingPanel() {
                   width: 32, height: 32, background: '#0e0700',
                   border: '1px solid #3a2500', borderRadius: 2,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a060',
                 }}>
-                  {outDef.iconIndex ?? '?'}
+                  <ItemIcon id={r.output} size={24} />
                 </div>
                 <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a060', marginTop: 2 }}>
                   {r.outputCount * qty}× {outDef.displayName.split(' ')[0]}

@@ -276,8 +276,10 @@ export function useChainActions() {
         const granted = Object.entries(delta.grant)
         const itemId  = granted[0]?.[0] ?? 'FISH'
         const count   = granted[0]?.[1] ?? 1
+        // fishResult adds the item locally and shows the hint.
+        // craftDelta is intentionally NOT dispatched here — fishResult already
+        // applies the chain grant, and dispatching both would double-grant.
         window.dispatchEvent(new CustomEvent('gensurvival:fishResult', { detail: { itemId, count } }))
-        window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
         store.setTxStatus(false, '')
         return delta
       } catch (err: unknown) {

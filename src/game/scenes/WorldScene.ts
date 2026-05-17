@@ -122,6 +122,9 @@ export class WorldScene extends Phaser.Scene {
   private hydrateChainStateHandler: EventListener | null = null
   private chainMineConfirmedHandler: EventListener | null = null
   private chainPlaceConfirmedHandler: EventListener | null = null
+  private fishResultHandler: EventListener | null = null
+  private equipItemHandler: EventListener | null = null
+  private setHotbarSlotHandler: EventListener | null = null
   private keyDownHandler: EventListener | null = null
   private keyUpHandler: EventListener | null = null
   private blurHandler: (() => void) | null = null
@@ -285,15 +288,20 @@ export class WorldScene extends Phaser.Scene {
     window.addEventListener('gensurvival:chainPlaceConfirmed', this.chainPlaceConfirmedHandler)
 
     // ── Fish result listener ─────────────────────────────────────
-    window.addEventListener('gensurvival:fishResult', ((e: CustomEvent) => {
+    // Only shows the hint and adds the item — craftDelta is NOT dispatched for
+    // fishing to avoid double-granting. The chain delta is the authoritative source;
+    // fishResult data comes directly from delta.grant so it is already chain-verified.
+    this.fishResultHandler = ((e: CustomEvent) => {
       const { itemId, count } = e.detail as { itemId: string; count: number }
       const inv = this.player.components.inventory!
       addItem(inv, itemId as ItemId, count)
-      this.showHint(`Caught ${count}x ${itemId.replace(/_/g, ' ')}! 🐟`, '#88ccff')
-    }) as EventListener)
+      this.syncReactStore()
+      this.showHint(`Caught ${count}x ${itemId.replace(/_/g, ' ')}!`, '#88ccff')
+    }) as EventListener
+    window.addEventListener('gensurvival:fishResult', this.fishResultHandler)
 
     // ── Equip item to active hotbar slot (from React inventory panel) ──
-    window.addEventListener('gensurvival:equipItem', ((e: CustomEvent) => {
+    this.equipItemHandler = ((e: CustomEvent) => {
       const { itemId } = e.detail as { itemId: string }
       const inv = this.player.components.inventory!
       if ((inv.items.get(itemId as ItemId) ?? 0) > 0) {
@@ -301,13 +309,15 @@ export class WorldScene extends Phaser.Scene {
         this.syncReactStore()
         this.showHint(`Equipped ${itemId.replace(/_/g, ' ')}  [slot ${inv.hotbarIndex + 1}]`, '#f5c842')
       }
-    }) as EventListener)
+    }) as EventListener
+    window.addEventListener('gensurvival:equipItem', this.equipItemHandler)
 
     // ── Set hotbar slot from React hotbar UI ──────────────────────
-    window.addEventListener('gensurvival:setHotbarSlot', ((e: CustomEvent) => {
+    this.setHotbarSlotHandler = ((e: CustomEvent) => {
       const { slot } = e.detail as { slot: number }
       this.player.components.inventory!.hotbarIndex = slot
-    }) as EventListener)
+    }) as EventListener
+    window.addEventListener('gensurvival:setHotbarSlot', this.setHotbarSlotHandler)
 
     // ── Sync React store initial stats ───────────────────────────
     this.syncReactStore()
@@ -1488,6 +1498,18 @@ export class WorldScene extends Phaser.Scene {
       window.removeEventListener('blur', this.blurHandler)
       this.blurHandler = null
     }
+    if (this.fishResultHandler) {
+      window.removeEventListener('gensurvival:fishResult', this.fishResultHandler)
+      this.fishResultHandler = null
+    }
+    if (this.equipItemHandler) {
+      window.removeEventListener('gensurvival:equipItem', this.equipItemHandler)
+      this.equipItemHandler = null
+    }
+    if (this.setHotbarSlotHandler) {
+      window.removeEventListener('gensurvival:setHotbarSlot', this.setHotbarSlotHandler)
+      this.setHotbarSlotHandler = null
+    }
     this.heldKeys.clear()
     this.doSave()
     this.tweens.killAll()
@@ -1518,5 +1540,8 @@ export class WorldScene extends Phaser.Scene {
       if (amt > 0) addItem(inv, id as ItemId, amt)
       else if (amt < 0) removeItem(inv, id as ItemId, Math.abs(amt))
     }
+
+    // Push updated stats to React so HUD/panels reflect changes immediately
+    this.syncReactStore()
   }
 }
