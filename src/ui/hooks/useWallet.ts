@@ -110,6 +110,13 @@ export function useWallet() {
       const seed = getOrCreateSeed(address)
       const registered = await isRegistered(address)
 
+      // null = GenLayer RPC unreachable — don't show registration form or the
+      // player could accidentally double-register when the network recovers.
+      if (registered === null) {
+        toast.error('Could not reach GenLayer network. Check your connection and try again.')
+        return
+      }
+
       if (!registered) {
         setPendingRegistration({ address, seed })
         return

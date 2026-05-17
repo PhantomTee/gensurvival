@@ -68,10 +68,12 @@ export interface ActionDelta {
   }
 }
 
-export async function isRegistered(address: string): Promise<boolean> {
+// Returns true = registered, false = not registered, null = network/RPC error.
+// Callers must NOT treat null the same as false — null means "unknown, don't show registration form".
+export async function isRegistered(address: string): Promise<boolean | null> {
   try {
     return await readContract<boolean>(ADDRESSES.PLAYER_REGISTRY, 'is_registered', [address])
-  } catch { return false }
+  } catch { return null }
 }
 
 export async function getProfile(address: string): Promise<{ name: string; score: number } | null> {

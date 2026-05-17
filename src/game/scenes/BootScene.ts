@@ -89,6 +89,21 @@ export class BootScene extends Phaser.Scene {
         canvas.height = 16
         const ctx = canvas.getContext('2d')!
 
+        // ── PNG-backed tiles: draw the real source PNG, overlay brightness per variant ──
+        // Tiles that tile seamlessly (no hard border in the PNG) look best this way.
+        // coal_ore has no PNG so it stays procedural; rock uses the cobblestone below.
+        const PNG_BACKED = ['void','water','sand','dirt','grass','iron_ore','wood_floor','wood_wall']
+        if (PNG_BACKED.includes(id)) {
+          const src = this.textures.get(`_tile_raw_${id}`).getSourceImage() as HTMLImageElement | HTMLCanvasElement
+          ctx.drawImage(src, 0, 0, 16, 16)
+          // v0 = original  v1 = –8 % (darker)  v2 = +6 % (lighter)  v3 = –5 %
+          if (v === 1) { ctx.fillStyle = 'rgba(0,0,0,0.08)';       ctx.fillRect(0, 0, 16, 16) }
+          if (v === 2) { ctx.fillStyle = 'rgba(255,255,255,0.06)';  ctx.fillRect(0, 0, 16, 16) }
+          if (v === 3) { ctx.fillStyle = 'rgba(0,0,0,0.05)';        ctx.fillRect(0, 0, 16, 16) }
+          this.textures.addCanvas(`tile_${id}_${v}`, canvas)
+          continue
+        }
+
         // ── Procedural cobblestone rock ──────────────────────────────────────
         // Small staggered bricks (5 wide × 3 tall) with 1 px mortar gaps.
         // Each brick gets an independent brightness hash so no two look identical.

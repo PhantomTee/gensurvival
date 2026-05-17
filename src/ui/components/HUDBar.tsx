@@ -28,7 +28,8 @@ function Bar({ value, max, color, icon }: { value: number; max: number; color: s
 }
 
 export function HUDBar() {
-  const stats       = useGameStore((s) => s.playerStats)
+  const stats        = useGameStore((s) => s.playerStats)
+  const playerName   = useGameStore((s) => s.playerName)
   const openCrafting = useGameStore((s) => s.openCrafting)
 
   if (!stats) return null
@@ -50,6 +51,24 @@ export function HUDBar() {
       userSelect: 'none',
       pointerEvents: 'none',   /* stats area is non-interactive */
     }}>
+      {/* Player name — shown when wallet is connected */}
+      {playerName && (
+        <div style={{
+          fontFamily: "'Press Start 2P', monospace",
+          fontSize: 9,
+          color: '#f5c842',
+          letterSpacing: 1,
+          marginBottom: 2,
+          textShadow: '0 0 6px rgba(245,200,66,0.35)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: 180,
+        }}>
+          ⚔ {playerName}
+        </div>
+      )}
+
       <Bar value={stats.health} max={stats.maxHealth} color="#ef4444" icon="♥" />
       <Bar value={stats.energy} max={stats.maxEnergy} color="#eab308" icon="⚡" />
 

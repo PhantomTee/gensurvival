@@ -63,6 +63,17 @@ export class MainMenuScene extends Phaser.Scene {
     btn.on('pointerout',   () => { if (!clicked) btn.setColor('#44ff88') })
     btn.on('pointerdown',  () => {
       if (clicked) return
+
+      // Wallet gate — must be connected AND registered to enter the world
+      const { walletAddress, isRegistered: registered } = useGameStore.getState()
+      if (!walletAddress || !registered) {
+        btn.setText('CONNECT WALLET FIRST').setColor('#ff6644')
+        this.time.delayedCall(2500, () => {
+          btn.setText('[ START GAME ]').setColor('#44ff88')
+        })
+        return
+      }
+
       clicked = true
       // Visual loading state — grey out immediately so user sees feedback
       btn.setText('[ LOADING... ]')
@@ -74,10 +85,10 @@ export class MainMenuScene extends Phaser.Scene {
       this.time.delayedCall(80, () => { this.scene.start('WorldScene') })
     })
 
-    // Hint text
-    this.add.text(width / 2, height * 0.78, 'Connect wallet (top-right) to save progress on-chain', {
+    // Hint text — wallet is required, not optional
+    this.add.text(width / 2, height * 0.78, 'Connect your wallet (top-right) to play', {
       fontSize: '8px',
-      color: '#334455',
+      color: '#556633',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(0.5)
 
