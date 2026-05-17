@@ -89,15 +89,56 @@ export class BootScene extends Phaser.Scene {
         canvas.height = 16
         const ctx = canvas.getContext('2d')!
 
-        // ── PNG-backed rock: draw the real tile_rock.png, tint per variant ────
-        // Avoid getImageData (canvas-taint risk) — use composite overlay instead.
+        // ── Procedural cobblestone rock ──────────────────────────────────────
+        // Small staggered bricks (5 wide × 3 tall) with 1 px mortar gaps.
+        // Each brick gets an independent brightness hash so no two look identical.
+        // Avoids the "cross rail" seam that the source PNG creates when tiled.
         if (id === 'rock') {
-          const src = this.textures.get('_tile_raw_rock').getSourceImage() as HTMLImageElement | HTMLCanvasElement
-          ctx.drawImage(src, 0, 0, 16, 16)
-          // v0 = original, v1 = slightly darker, v2 = slightly lighter, v3 = darker
-          if (v === 1) { ctx.fillStyle = 'rgba(0,0,0,0.10)';       ctx.fillRect(0, 0, 16, 16) }
-          if (v === 2) { ctx.fillStyle = 'rgba(255,255,255,0.08)';  ctx.fillRect(0, 0, 16, 16) }
-          if (v === 3) { ctx.fillStyle = 'rgba(0,0,0,0.06)';        ctx.fillRect(0, 0, 16, 16) }
+          const rph = (px: number, py: number, seed: number): number => {
+            let h = (Math.imul(px + 1, 0x41c64e6d) ^
+                     Math.imul(py + 1, 0x6073)     ^
+                     Math.imul(seed  + 1, 0x5851f42d)) >>> 0
+            h = (Math.imul(h ^ (h >>> 16), 0x45d9f3b)) >>> 0
+            return h & 0xff
+          }
+          // Cell dimensions: brick + mortar
+          const CELL_W = 6, BW = 5   // 5 px brick + 1 px mortar
+          const CELL_H = 4, BH = 3   // 3 px brick + 1 px mortar
+          const BASE_R = 118, BASE_G = 115, BASE_B = 110
+          const MORT_R =  62, MORT_G =  60, MORT_B =  56
+          const vBright = [0, -0.07, 0.05, -0.04][v]
+
+          const rd = ctx.createImageData(16, 16)
+          const rb = rd.data
+
+          for (let py = 0; py < 16; py++) {
+            const brickRow = Math.floor(py / CELL_H)
+            const ry = py % CELL_H
+            // Stagger odd rows by half a cell so seams don't line up vertically
+            const xOff = (brickRow & 1) * 3
+
+            for (let px = 0; px < 16; px++) {
+              const i  = (py * 16 + px) * 4
+              const rx = (px + xOff) % CELL_W
+              if (ry === BH || rx === BW) {
+                // Mortar pixel
+                rb[i] = MORT_R; rb[i+1] = MORT_G; rb[i+2] = MORT_B; rb[i+3] = 255
+              } else {
+                // Brick interior — hash per brick + tiny per-pixel noise
+                const bCol = Math.floor((px + xOff) / CELL_W)
+                const bv   = rph(bCol, brickRow, v ^ 0x40)   // per-brick seed
+                const vary = (bv - 128) / 128 * 20           // ±20 brightness
+                const pn   = rph(px, py, v ^ 0x41)           // per-pixel noise
+                const pv   = (pn - 128) / 128 * 4            // ±4 brightness
+                const b    = 1 + vBright
+                rb[i]     = Math.min(255, Math.max(0, ((BASE_R + vary + pv) * b) | 0))
+                rb[i + 1] = Math.min(255, Math.max(0, ((BASE_G + vary + pv) * b) | 0))
+                rb[i + 2] = Math.min(255, Math.max(0, ((BASE_B + vary + pv) * b) | 0))
+                rb[i + 3] = 255
+              }
+            }
+          }
+          ctx.putImageData(rd, 0, 0)
           this.textures.addCanvas(`tile_rock_${v}`, canvas)
           continue
         }
