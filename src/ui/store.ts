@@ -73,12 +73,28 @@ export interface HouseMintPrompt {
   inventory: Record<string, number>
 }
 
+// ─── Wallet phase state machine ───────────────────────────────────────────────
+
+export type WalletPhase = 'idle' | 'checking' | 'needs-name' | 'needs-signin' | 'ready'
+
+export interface WalletPending {
+  address: string
+  seed: number
+  name: string   // empty string for brand-new players
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 interface GameStore {
   // App state
   screen: Screen
   setScreen: (s: Screen) => void
+
+  // Wallet phase & pending data (state machine used by WalletGate overlay)
+  walletPhase: WalletPhase
+  setWalletPhase: (phase: WalletPhase) => void
+  walletPending: WalletPending | null
+  setWalletPending: (p: WalletPending | null) => void
 
   // Wallet
   walletAddress: string
@@ -141,6 +157,11 @@ interface GameStore {
 export const useGameStore = create<GameStore>((set) => ({
   screen: 'menu',
   setScreen: (screen) => set({ screen }),
+
+  walletPhase: 'idle',
+  setWalletPhase: (walletPhase) => set({ walletPhase }),
+  walletPending: null,
+  setWalletPending: (walletPending) => set({ walletPending }),
 
   walletAddress: '',
   playerName: '',

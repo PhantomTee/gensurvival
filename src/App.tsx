@@ -13,6 +13,7 @@ import { EpochTimer }      from './ui/components/EpochTimer'
 import { EventResultCard } from './ui/components/EventResultCard'
 import { LeaderboardModal} from './ui/components/Leaderboard'
 import { HouseMintModal }  from './ui/components/HouseMintModal'
+import { WalletGate }      from './ui/components/WalletGate'
 import { ToastContainer }  from './ui/components/Toast'
 import { useGameStore }    from './ui/store'
 import { useChainActions } from './ui/hooks/useChainActions'
@@ -26,6 +27,7 @@ function App() {
   const walletAddress = useGameStore((s) => s.walletAddress)
   const dayNumber     = useGameStore((s) => s.playerStats?.dayNumber ?? 0)
   const lastDayRef    = useRef(0)
+  const prevScreenRef = useRef<'menu' | 'game'>('menu')
   const chain         = useChainActions()
 
   // ── Mount Phaser once ───────────────────────────────────────────────────────
@@ -80,6 +82,22 @@ function App() {
       gameRef.current = null
     }
   }, [])
+
+  // When disconnect() forces screen → 'menu', tell Phaser to return to MainMenuScene
+  useEffect(() => {
+    if (prevScreenRef.current === 'game' && screen === 'menu') {
+      const game = gameRef.current
+      if (game) {
+        const world = game.scene.getScene('WorldScene')
+        if (world?.scene.isActive()) {
+          game.scene.stop('WorldScene')
+          game.scene.stop('PauseScene')
+          game.scene.start('MainMenuScene')
+        }
+      }
+    }
+    prevScreenRef.current = screen
+  }, [screen])
 
   useEffect(() => {
     const handleMineTile = ((e: CustomEvent) => {
@@ -147,6 +165,9 @@ function App() {
 
       {/* WalletBadge — always visible so the user can connect from the main menu */}
       <WalletBadge />
+
+      {/* WalletGate — full-screen overlay while wallet connect is in progress */}
+      <WalletGate />
 
       {/* React UI overlay — pointer-events are managed per-component */}
       {screen === 'game' && (

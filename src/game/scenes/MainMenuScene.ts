@@ -3,7 +3,14 @@ import { useGameStore } from '../../ui/store'
 
 /**
  * MainMenuScene — shows the title and a "Start Game" button.
- * Wallet connection is handled by the React overlay (WalletBadge).
+ *
+ * Wallet connection is handled by the React overlay (WalletBadge + WalletGate).
+ *
+ * Two paths enter the game world:
+ *   1. "Start Game" button — requires walletPhase === 'ready' (already connected)
+ *   2. gensurvival:startWorld event — dispatched by useWallet.connect() the moment
+ *      MetaMask returns an address, so the game screen appears immediately while
+ *      the on-chain checks run in the background behind the WalletGate overlay.
  */
 export class MainMenuScene extends Phaser.Scene {
   constructor() { super({ key: 'MainMenuScene' }) }
@@ -58,37 +65,54 @@ export class MainMenuScene extends Phaser.Scene {
       shadow: { offsetX: 3, offsetY: 3, color: '#004400', blur: 0, fill: true },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true })
 
+    // ── Core transition logic ─────────────────────────────────────────────
     let clicked = false
-    btn.on('pointerover',  () => { if (!clicked) btn.setColor('#88ffaa') })
-    btn.on('pointerout',   () => { if (!clicked) btn.setColor('#44ff88') })
-    btn.on('pointerdown',  () => {
+
+    const doStartWorld = () => {
       if (clicked) return
-
-      // Wallet gate — must be connected AND registered to enter the world
-      const { walletAddress, isRegistered: registered } = useGameStore.getState()
-      if (!walletAddress || !registered) {
-        btn.setText('CONNECT WALLET FIRST').setColor('#ff6644')
-        this.time.delayedCall(2500, () => {
-          btn.setText('[ START GAME ]').setColor('#44ff88')
-        })
-        return
-      }
-
       clicked = true
-      // Visual loading state — grey out immediately so user sees feedback
       btn.setText('[ LOADING... ]')
         .setColor('#556655')
         .setBackgroundColor('#0a0f0a')
         .disableInteractive()
       useGameStore.getState().setScreen('game')
-      // Small delay so the re-paint is visible before the heavy WorldScene create() runs
+      // Small delay so the repaint is visible before heavy WorldScene.create() runs
       this.time.delayedCall(80, () => { this.scene.start('WorldScene') })
+    }
+
+    // Listen for the event dispatched by useWallet.connect() (and by the button below)
+    const startWorldHandler = () => doStartWorld()
+    window.addEventListener('gensurvival:startWorld', startWorldHandler)
+
+    // Clean up listener when this scene shuts down (prevents duplicate handlers on restart)
+    this.events.once('shutdown', () => {
+      window.removeEventListener('gensurvival:startWorld', startWorldHandler)
     })
 
-    // Hint text — wallet is required, not optional
+    // ── Start button ──────────────────────────────────────────────────────
+    btn.on('pointerover', () => { if (!clicked) btn.setColor('#88ffaa') })
+    btn.on('pointerout',  () => { if (!clicked) btn.setColor('#44ff88') })
+    btn.on('pointerdown', () => {
+      if (clicked) return
+
+      // Must have a fully verified wallet to enter the world from the button.
+      // (The connect flow enters via gensurvival:startWorld before phase is 'ready'.)
+      const { walletPhase } = useGameStore.getState()
+      if (walletPhase !== 'ready') {
+        btn.setText('CONNECT WALLET FIRST').setColor('#ff6644')
+        this.time.delayedCall(2500, () => {
+          if (!clicked) btn.setText('[ START GAME ]').setColor('#44ff88')
+        })
+        return
+      }
+
+      doStartWorld()
+    })
+
+    // Hint text
     this.add.text(width / 2, height * 0.78, 'Connect your wallet (top-right) to play', {
       fontSize: '8px',
-      color: '#556633',
+      color: '#334455',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(0.5)
 
