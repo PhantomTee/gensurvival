@@ -2,6 +2,7 @@ import React from 'react'
 import { useGameStore } from '../store'
 import { ITEMS } from '../../game/registry/ITEMS'
 import type { ItemId } from '../../game/registry/ITEMS'
+import { ItemIcon } from './ItemIcon'
 
 const SLOT_SIZE = 52
 const SLOTS = 5
@@ -72,16 +73,7 @@ export function Hotbar() {
 
             {itemDef ? (
               <>
-                <img
-                  src={itemIconUrl(itemId as ItemId)}
-                  alt={itemDef.displayName}
-                  style={{
-                    width: 28, height: 28,
-                    imageRendering: 'pixelated',
-                    objectFit: 'contain',
-                  }}
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                />
+                <ItemIcon id={itemId as ItemId} size={28} />
                 {/* Stack count */}
                 {count > 1 && (
                   <span style={{

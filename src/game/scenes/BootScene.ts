@@ -111,19 +111,24 @@ export class BootScene extends Phaser.Scene {
         }
 
         // ── Base noise pass ────────────────────────────────────────────────
-        for (let py = 0; py < 16; py++) {
-          for (let px = 0; px < 16; px++) {
-            const i = (py * 16 + px) * 4
-            if (d[i + 3] < 32) continue
+        // Stone tiles (rock/coal_ore/iron_ore) use smooth bilinear noise applied
+        // in the detail pass below — skip per-pixel static for them.
+        const isStone = id === 'rock' || id === 'coal_ore' || id === 'iron_ore'
+        if (!isStone) {
+          for (let py = 0; py < 16; py++) {
+            for (let px = 0; px < 16; px++) {
+              const i = (py * 16 + px) * 4
+              if (d[i + 3] < 32) continue
 
-            const noise = ph(px, py, v ^ 0xabc) / 255   // 0..1
+              const noise = ph(px, py, v ^ 0xabc) / 255   // 0..1
 
-            // Brightness = variant offset ± per-pixel noise in ±8 %
-            const b = 1 + vBright + (noise - 0.5) * 0.16
+              // Brightness = variant offset ± per-pixel noise in ±8 %
+              const b = 1 + vBright + (noise - 0.5) * 0.16
 
-            d[i]     = Math.min(255, Math.max(0, d[i]     * b | 0))
-            d[i + 1] = Math.min(255, Math.max(0, d[i + 1] * b | 0))
-            d[i + 2] = Math.min(255, Math.max(0, d[i + 2] * b | 0))
+              d[i]     = Math.min(255, Math.max(0, d[i]     * b | 0))
+              d[i + 1] = Math.min(255, Math.max(0, d[i + 1] * b | 0))
+              d[i + 2] = Math.min(255, Math.max(0, d[i + 2] * b | 0))
+            }
           }
         }
 
@@ -167,29 +172,77 @@ export class BootScene extends Phaser.Scene {
           }
 
         } else if (id === 'rock' || id === 'coal_ore' || id === 'iron_ore') {
-          // Organic cracks using proper 2-D hash — eliminates diagonal banding
+          // ── Smooth stone shading via bilinear-interpolated coarse noise ────
+          // Build a 5×5 grid of random values, then interpolate them to get
+          // smooth, large-scale brightness gradients — no per-pixel static.
+          const GRID = 5
+          const grid: number[][] = Array.from({ length: GRID }, (_, gy) =>
+            Array.from({ length: GRID }, (_, gx) => ph(gx, gy, v ^ 0x30) / 255)
+          )
+          const bilerp = (tx: number, ty: number): number => {
+            const gfx = tx * (GRID - 1), gfy = ty * (GRID - 1)
+            const gx0 = Math.floor(gfx) | 0, gy0 = Math.floor(gfy) | 0
+            const gx1 = Math.min(gx0 + 1, GRID - 1), gy1 = Math.min(gy0 + 1, GRID - 1)
+            const fx = gfx - gx0, fy = gfy - gy0
+            return (
+              grid[gy0][gx0] * (1 - fx) * (1 - fy) +
+              grid[gy0][gx1] *      fx  * (1 - fy) +
+              grid[gy1][gx0] * (1 - fx) *      fy  +
+              grid[gy1][gx1] *      fx  *      fy
+            )
+          }
+
+          // Second 5×5 grid at a different scale for crack/vein patterns
+          const grid2: number[][] = Array.from({ length: GRID }, (_, gy) =>
+            Array.from({ length: GRID }, (_, gx) => ph(gx + 7, gy + 3, v ^ 0x3a) / 255)
+          )
+
+          // Apply variant brightness + smooth gradient + type overlays
           for (let py = 0; py < 16; py++) {
             for (let px = 0; px < 16; px++) {
-              const cr = ph(px, py, v ^ 0x33)
-              const i  = (py * 16 + px) * 4
-              if (id === 'coal_ore' && cr > 200) {
-                // Coal speckles — slightly less dense, softer edge
-                const strength = Math.round((cr - 200) / 55 * 80)
-                d[i]     = Math.max(0, d[i]     - strength)
-                d[i + 1] = Math.max(0, d[i + 1] - strength)
-                d[i + 2] = Math.max(0, d[i + 2] - strength)
-                continue
+              const i = (py * 16 + px) * 4
+              const smooth  = bilerp(px / 15, py / 15)   // 0..1 large-scale gradient
+              const smooth2 = bilerp((px + 0.5) / 15, (py + 0.5) / 15)  // offset grid
+
+              // Smooth brightness: variant offset ± 20 % from large-scale gradient
+              const b = 1 + vBright + (smooth - 0.5) * 0.40
+              d[i]     = Math.min(255, Math.max(0, d[i]     * b | 0))
+              d[i + 1] = Math.min(255, Math.max(0, d[i + 1] * b | 0))
+              d[i + 2] = Math.min(255, Math.max(0, d[i + 2] * b | 0))
+
+              if (id === 'coal_ore') {
+                // Smooth coal vein clusters — use second grid so they follow
+                // organic blobs rather than individual pixels
+                if (smooth2 < 0.28) {
+                  const depth = (0.28 - smooth2) / 0.28  // 0..1 depth into vein
+                  const s = Math.round(depth * 65)
+                  d[i]     = Math.max(0, d[i]     - s)
+                  d[i + 1] = Math.max(0, d[i + 1] - s)
+                  d[i + 2] = Math.max(0, d[i + 2] - s)
+                }
+              } else if (id === 'iron_ore') {
+                // Smooth iron vein highlights — warm bluish tint in vein areas
+                if (smooth2 > 0.65) {
+                  const depth = (smooth2 - 0.65) / 0.35
+                  const s = Math.round(depth * 28)
+                  d[i]     = Math.max(0, d[i]     - (s >> 1))
+                  d[i + 1] = Math.max(0, d[i + 1] - (s >> 1))
+                  d[i + 2] = Math.min(255, d[i + 2] + s)
+                }
+              } else {
+                // rock — sparse mineral glints where both grids are bright
+                if (smooth > 0.80 && smooth2 > 0.80) {
+                  d[i]     = Math.min(255, d[i]     + 18)
+                  d[i + 1] = Math.min(255, d[i + 1] + 18)
+                  d[i + 2] = Math.min(255, d[i + 2] + 18)
+                }
               }
-              if (cr < 9) {
-                // Rare thin crack — softer than before
-                d[i]     = Math.max(0, d[i]     - 22)
-                d[i + 1] = Math.max(0, d[i + 1] - 22)
-                d[i + 2] = Math.max(0, d[i + 2] - 22)
-              } else if (cr > 248) {
-                // Very rare bright mineral glint
-                d[i]     = Math.min(255, d[i]     + 14)
-                d[i + 1] = Math.min(255, d[i + 1] + 14)
-                d[i + 2] = Math.min(255, d[i + 2] + 14)
+
+              // Shared: rare dark crack lines where BOTH grids dip very low
+              if (smooth < 0.12 && smooth2 < 0.15) {
+                d[i]     = Math.max(0, d[i]     - 28)
+                d[i + 1] = Math.max(0, d[i + 1] - 28)
+                d[i + 2] = Math.max(0, d[i + 2] - 28)
               }
             }
           }

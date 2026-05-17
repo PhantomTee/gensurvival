@@ -18,7 +18,7 @@ import { CombatSystem } from '../systems/CombatSystem'
 import { AISystem } from '../systems/AISystem'
 import { InventorySystem } from '../systems/InventorySystem'
 import { makeDayNight, updateDayNight, type DayNightState } from '../systems/DayNightSystem'
-import { TILE_SIZE, CHUNK_SIZE } from '../constants'
+import { TILE_SIZE, CHUNK_SIZE, DAY_STAGES } from '../constants'
 import { TILES, TILE_BY_INDEX } from '../registry/TILES'
 import { addItem, removeItem } from '../components'
 import { Entity } from '../entities/Entity'
@@ -190,11 +190,9 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setZoom(3)
 
     // ── Day / Night overlay ──────────────────────────────────────
+    // makeDayNight() syncs to real UTC+1 clock — never override totalElapsedMs
     this.dayNight = makeDayNight()
-    if (savedWorld) {
-      this.dayNight.totalElapsedMs = savedWorld.dayTimeMs
-      this.dayNight.dayNumber      = savedWorld.dayNumber
-    }
+    if (savedWorld) this.dayNight.dayNumber = savedWorld.dayNumber
     const { width, height } = this.scale
     this.ambientOverlay = this.add
       .rectangle(0, 0, width * 10, height * 10, 0x000033, 0)
@@ -300,6 +298,7 @@ export class WorldScene extends Phaser.Scene {
       const inv = this.player.components.inventory!
       if ((inv.items.get(itemId as ItemId) ?? 0) > 0) {
         inv.hotbar[inv.hotbarIndex] = itemId as ItemId
+        this.syncReactStore()
         this.showHint(`Equipped ${itemId.replace(/_/g, ' ')}  [slot ${inv.hotbarIndex + 1}]`, '#f5c842')
       }
     }) as EventListener)
@@ -849,7 +848,9 @@ export class WorldScene extends Phaser.Scene {
         useGameStore.getState().openCrafting('FURNACE', e.id)
       } else if (e.type === 'BED') {
         // Sleep: skip to morning, restore health + energy
-        this.dayNight.totalElapsedMs = Math.ceil(this.dayNight.totalElapsedMs / 86_000) * 86_000
+        // Real-time day cycle — skip to next dawn (next cycle boundary)
+        const cycleDurationMs = DAY_STAGES.reduce((s, st) => s + st.duration, 0)
+        this.dayNight.totalElapsedMs = Math.ceil((this.dayNight.totalElapsedMs + 1) / cycleDurationMs) * cycleDurationMs
         const h = this.player.components.health!
         const en = this.player.components.energy!
         h.value = h.max

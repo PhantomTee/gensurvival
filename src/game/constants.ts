@@ -12,11 +12,13 @@ export const PLAYER_INVENTORY_SLOTS = 64
 export const ATTACK_COOLDOWN = 500
 export const KNOCKBACK_FORCE = 80
 
+// Real-world UTC+1 day cycle (total = 86 400 000 ms = 24 h).
+// Cycle origin = 06:00 UTC+1 (dawn). makeDayNight() seeds totalElapsedMs from the clock.
 export const DAY_STAGES = [
-  { name: 'dawn', duration: 8_000, ambientR: 255, ambientG: 200, ambientB: 160, alpha: 0.2 },
-  { name: 'day', duration: 40_000, ambientR: 255, ambientG: 255, ambientB: 255, alpha: 0.0 },
-  { name: 'dusk', duration: 8_000, ambientR: 255, ambientG: 160, ambientB: 80, alpha: 0.25 },
-  { name: 'night', duration: 30_000, ambientR: 20, ambientG: 20, ambientB: 60, alpha: 0.65 },
+  { name: 'dawn',  duration:  7_200_000, ambientR: 255, ambientG: 200, ambientB: 160, alpha: 0.20 }, // 06:00–08:00
+  { name: 'day',   duration: 43_200_000, ambientR: 255, ambientG: 255, ambientB: 255, alpha: 0.00 }, // 08:00–20:00
+  { name: 'dusk',  duration:  7_200_000, ambientR: 255, ambientG: 160, ambientB:  80, alpha: 0.25 }, // 20:00–22:00
+  { name: 'night', duration: 28_800_000, ambientR:  20, ambientG:  20, ambientB:  60, alpha: 0.65 }, // 22:00–06:00
 ]
 
 // GenSurvival island thresholds: ocean first, then beach, then grass.

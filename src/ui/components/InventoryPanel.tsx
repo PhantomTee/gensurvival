@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useGameStore } from '../store'
 import { ITEMS } from '../../game/registry/ITEMS'
 import type { ItemId } from '../../game/registry/ITEMS'
+import { ItemIcon } from './ItemIcon'
 
 const RPG_PANEL: React.CSSProperties = {
   background: 'linear-gradient(180deg,#1c1008 0%,#110900 100%)',
@@ -143,12 +144,7 @@ export function InventoryPanel() {
                   opacity: 0.8,
                 }} />
 
-                <img
-                  src={itemIconUrl(id)}
-                  alt={def.displayName}
-                  style={{ width: 26, height: 26, imageRendering: 'pixelated', objectFit: 'contain' }}
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                />
+                <ItemIcon id={id} size={26} />
                 <span style={{ color: '#f5c842', fontFamily: "'Press Start 2P', monospace", fontSize: 9, fontWeight: 'bold' }}>
                   {count}
                 </span>
