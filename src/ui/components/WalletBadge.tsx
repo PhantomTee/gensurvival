@@ -14,11 +14,11 @@ import { useWallet } from '../hooks/useWallet'
 const FONT: React.CSSProperties = { fontFamily: "'Press Start 2P', monospace" }
 
 export function WalletBadge() {
-  const address = useGameStore((s) => s.walletAddress)
-  const name    = useGameStore((s) => s.playerName)
-  const isReg   = useGameStore((s) => s.isRegistered)
-  const phase   = useGameStore((s) => s.walletPhase)
-  const { connect, disconnect, connecting } = useWallet()
+  const address    = useGameStore((s) => s.walletAddress)
+  const name       = useGameStore((s) => s.playerName)
+  const isReg      = useGameStore((s) => s.isRegistered)
+  const connecting = useGameStore((s) => s.walletConnecting)
+  const { connect, disconnect } = useWallet()
 
   const short = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null
 
@@ -61,21 +61,21 @@ export function WalletBadge() {
         /* ── Connect button ── */
         <button
           onClick={connect}
-          disabled={connecting || phase === 'checking'}
+          disabled={connecting}
           style={{
             background: 'linear-gradient(180deg,#3d2200 0%,#1a0f00 100%)',
             border: '2px solid #c8860a', borderRadius: 4,
             color: '#f5c842',
             ...FONT, fontSize: 11, fontWeight: 'bold',
             padding: '6px 14px',
-            cursor: (connecting || phase === 'checking') ? 'wait' : 'pointer',
-            opacity: (connecting || phase === 'checking') ? 0.7 : 1,
+            cursor: connecting ? 'wait' : 'pointer',
+            opacity: connecting ? 0.7 : 1,
             boxShadow: '2px 2px 0 #000, inset 0 1px 0 rgba(255,200,80,0.2)',
             letterSpacing: 1,
             textShadow: '0 0 8px rgba(245,200,66,0.5)',
           }}
         >
-          {(connecting || phase === 'checking') ? 'CONNECTING...' : 'CONNECT EVM WALLET'}
+          {connecting ? 'CONNECTING...' : 'CONNECT EVM WALLET'}
         </button>
       )}
     </div>

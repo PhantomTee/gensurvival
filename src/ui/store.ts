@@ -95,6 +95,8 @@ interface GameStore {
   setWalletPhase: (phase: WalletPhase) => void
   walletPending: WalletPending | null
   setWalletPending: (p: WalletPending | null) => void
+  walletConnecting: boolean
+  setWalletConnecting: (b: boolean) => void
 
   // Wallet
   walletAddress: string
@@ -162,6 +164,8 @@ export const useGameStore = create<GameStore>((set) => ({
   setWalletPhase: (walletPhase) => set({ walletPhase }),
   walletPending: null,
   setWalletPending: (walletPending) => set({ walletPending }),
+  walletConnecting: false,
+  setWalletConnecting: (walletConnecting) => set({ walletConnecting }),
 
   walletAddress: '',
   playerName: '',

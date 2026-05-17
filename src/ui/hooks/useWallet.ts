@@ -1,10 +1,19 @@
-import { useState, useEffect, useCallback } from 'react'
+/**
+ * useWallet — hook responsible for:
+ *   • auto-connect on page load (silent, no popup)
+ *   • MetaMask account-change listener
+ *   • manual connect() — shows MetaMask popup, kicks off the chain check
+ *   • disconnect()
+ *
+ * sign-in / registration actions live in walletActions.ts (plain functions,
+ * no hooks) so WalletGate can import them directly without calling useWallet().
+ */
+import { useEffect, useCallback } from 'react'
 import { useGameStore } from '../store'
 import { getOrCreateSeed } from '../../storage/SeedStorage'
-import { saveSession, loadSession, clearSession } from '../../storage/WalletSession'
-import { isRegistered, registerPlayer, getProfile } from '../../chain/contracts'
-import { createWriteClient, GENLAYER_STUDIONET, GENLAYER_STUDIONET_CHAIN_ID_HEX } from '../../chain/client'
-import { upsertPlayer } from '../../storage/supabase'
+import { loadSession, clearSession, saveSession } from '../../storage/WalletSession'
+import { isRegistered, getProfile } from '../../chain/contracts'
+import { GENLAYER_STUDIONET, GENLAYER_STUDIONET_CHAIN_ID_HEX } from '../../chain/client'
 import { toast } from '../toast'
 
 declare global {
@@ -69,26 +78,16 @@ async function ensureStudionet() {
 let autoConnectRan = false
 
 export function useWallet() {
-  const {
-    setWallet, clearWallet,
-    setWalletPhase, setWalletPending,
-    setScreen,
-  } = useGameStore()
-  const [connecting, setConnecting] = useState(false)
+  // Use individual selectors to avoid subscribing to the entire store
+  const setWallet          = useGameStore((s) => s.setWallet)
+  const clearWallet        = useGameStore((s) => s.clearWallet)
+  const setWalletPhase     = useGameStore((s) => s.setWalletPhase)
+  const setWalletPending   = useGameStore((s) => s.setWalletPending)
+  const setWalletConnecting = useGameStore((s) => s.setWalletConnecting)
+  const setScreen          = useGameStore((s) => s.setScreen)
+  const walletConnecting   = useGameStore((s) => s.walletConnecting)
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  function persistAndSetWallet(address: string, name: string, seed: number) {
-    saveSession({ address, name, seed, verifiedAt: Date.now() })
-    setWallet(address, name, true, seed)
-  }
-
-  async function mirrorPlayer(address: string, name: string) {
-    upsertPlayer({ address, name, score: 0, house_count: 0, days_survived: 0, xp: 0 })
-      .catch(() => { /* best-effort */ })
-  }
-
-  // ── Auto-connect on page load (silent — no popup, no modal) ──────────────
+  // ── Auto-connect on page load (silent — no popup) ─────────────────────────
   const autoConnect = useCallback(async () => {
     if (autoConnectRan) return
     autoConnectRan = true
@@ -97,22 +96,19 @@ export function useWallet() {
     if (!session || !window.ethereum) return
 
     try {
-      // eth_accounts is silent — returns [] if MetaMask is locked, never shows popup
       const accounts = await window.ethereum.request({ method: 'eth_accounts' }) as string[]
       const current  = accounts[0]?.toLowerCase()
 
       if (!current || current !== session.address.toLowerCase()) {
-        // MetaMask locked or switched account → clear stale session
         clearSession()
         return
       }
 
-      // Same account still unlocked → restore immediately with no modal.
-      // Player already proved ownership at first sign-in; session persists the proof.
+      // Same account still unlocked → restore session immediately, no sign required.
       setWallet(session.address, session.name, true, session.seed)
       setWalletPhase('ready')
     } catch {
-      // Silently fail — user will see Connect button
+      // Silently fail
     }
   }, [setWallet, setWalletPhase])
 
@@ -154,7 +150,7 @@ export function useWallet() {
       toast.error('No EVM wallet found. Install or enable a browser wallet.')
       return
     }
-    setConnecting(true)
+    setWalletConnecting(true)
     try {
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[]
       const address  = accounts[0]
@@ -164,8 +160,7 @@ export function useWallet() {
 
       const seed = getOrCreateSeed(address)
 
-      // If still on menu, transition to game screen immediately so the
-      // WalletGate overlay (with spinner) appears while we check the chain.
+      // Enter game screen immediately so the WalletGate overlay appears
       setWalletPhase('checking')
       if (useGameStore.getState().screen !== 'game') {
         window.dispatchEvent(new CustomEvent('gensurvival:startWorld'))
@@ -180,13 +175,11 @@ export function useWallet() {
       }
 
       if (!registered) {
-        // New player — need a name before registering
         setWalletPending({ address, seed, name: '' })
         setWalletPhase('needs-name')
         return
       }
 
-      // Returning player — require one-time personal_sign to prove ownership
       const profile    = await getProfile(address)
       const playerName = profile?.name ?? address.slice(0, 8)
       setWalletPending({ address, seed, name: playerName })
@@ -196,72 +189,8 @@ export function useWallet() {
       toast.error(`Wallet connect failed: ${friendlyWalletError(err)}`)
       setWalletPhase('idle')
     } finally {
-      setConnecting(false)
+      setWalletConnecting(false)
     }
-  }
-
-  // ── Sign-in challenge for returning players ───────────────────────────────
-  async function signIn() {
-    const pending = useGameStore.getState().walletPending
-    if (!pending || !window.ethereum) return
-    setConnecting(true)
-    try {
-      const { address, seed, name } = pending
-      const message =
-        `Welcome to GenSurvival!\n\n` +
-        `Signing this message proves wallet ownership.\n` +
-        `No transaction is sent and no gas is spent.\n\n` +
-        `Address: ${address}`
-
-      await window.ethereum.request({ method: 'personal_sign', params: [message, address] })
-
-      persistAndSetWallet(address, name, seed)
-      setWalletPending(null)
-      setWalletPhase('ready')
-      toast.success(`Welcome back, ${name}!`)
-      mirrorPlayer(address, name)
-    } catch (err) {
-      toast.error(`Sign in failed: ${friendlyWalletError(err)}`)
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  function cancelSignIn() {
-    setWalletPending(null)
-    setWalletPhase('idle')
-    toast.info('Sign in cancelled.')
-  }
-
-  // ── Registration for new players ──────────────────────────────────────────
-  async function completeRegistration(playerName: string) {
-    const pending = useGameStore.getState().walletPending
-    if (!pending) return
-    const name = playerName.trim()
-    if (!name) { toast.error('Choose a player name first.'); return }
-
-    setConnecting(true)
-    try {
-      toast.info('Creating on-chain profile — approve the transaction in your wallet...')
-      const client = createWriteClient(pending.address)
-      await registerPlayer(client, name)
-
-      persistAndSetWallet(pending.address, name, pending.seed)
-      setWalletPending(null)
-      setWalletPhase('ready')
-      toast.success(`Welcome to GenSurvival, ${name}!`)
-      mirrorPlayer(pending.address, name)
-    } catch (err) {
-      toast.error(`Registration failed: ${friendlyWalletError(err)}`)
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  function cancelRegistration() {
-    setWalletPending(null)
-    setWalletPhase('idle')
-    toast.info('Wallet setup cancelled.')
   }
 
   // ── Disconnect ────────────────────────────────────────────────────────────
@@ -274,10 +203,5 @@ export function useWallet() {
     toast.info('Wallet disconnected.')
   }
 
-  return {
-    connect, disconnect,
-    signIn, cancelSignIn,
-    completeRegistration, cancelRegistration,
-    connecting,
-  }
+  return { connect, disconnect, walletConnecting }
 }

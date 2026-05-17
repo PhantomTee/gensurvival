@@ -2,36 +2,33 @@
  * WalletGate — full-screen overlay shown on the game screen while the wallet
  * connection flow is in progress.
  *
- * Phases:
- *   checking    → spinner + "Verifying wallet…" (after MetaMask confirms address)
- *   needs-name  → name input + REGISTER & PLAY button (new player)
- *   needs-signin→ SIGN IN button (returning player, proves ownership once)
- *   idle/ready  → nothing rendered
+ * Reads walletPhase and walletConnecting from the store.
+ * Calls walletActions.ts (plain async functions — no hooks) for sign-in
+ * and registration so this component does NOT need to call useWallet().
+ *
+ * Phases rendered:
+ *   checking    → spinner + "Verifying wallet…"
+ *   needs-name  → name input + REGISTER & PLAY button
+ *   needs-signin→ SIGN IN button (one-time personal_sign)
+ *   idle/ready  → null (overlay hidden)
+ *
+ * CSS animation (.wallet-gate-spinner) lives in index.css to avoid React 19's
+ * automatic <style> hoisting which caused error #185.
  */
 import { useState } from 'react'
 import { useGameStore } from '../store'
-import { useWallet } from '../hooks/useWallet'
+import {
+  walletSignIn,
+  walletCancelSignIn,
+  walletCompleteRegistration,
+  walletCancelRegistration,
+} from '../hooks/walletActions'
 
 const FONT: React.CSSProperties = { fontFamily: "'Press Start 2P', monospace" }
 
 function setGameTextInputFocus(focused: boolean) {
   window.dispatchEvent(new CustomEvent('gensurvival:textInputFocus', { detail: focused }))
 }
-
-// ── Spinner animation (injected once) ────────────────────────────────────────
-const SPIN_STYLE = `
-@keyframes walletGateSpin {
-  to { transform: rotate(360deg); }
-}
-.wallet-gate-spinner {
-  width: 52px; height: 52px;
-  border: 5px solid rgba(136,170,255,0.15);
-  border-top-color: #88aaff;
-  border-right-color: rgba(136,170,255,0.5);
-  border-radius: 50%;
-  animation: walletGateSpin 0.75s linear infinite;
-}
-`
 
 // ── Shared card wrapper ───────────────────────────────────────────────────────
 function Card({ children }: { children: React.ReactNode }) {
@@ -80,7 +77,6 @@ function ActionBtn({ onClick, disabled, children }: {
         color: disabled ? '#2a5030' : '#86efac',
         cursor: disabled ? 'wait' : 'pointer',
         ...FONT, fontSize: 11,
-        transition: 'background 0.15s, border-color 0.15s',
       }}
     >
       {children}
@@ -99,7 +95,7 @@ function GhostBtn({ onClick, disabled, children }: {
         width: '100%', padding: '10px 16px',
         border: '1px solid #334', borderRadius: 6,
         background: 'transparent',
-        color: '#445',
+        color: '#556',
         cursor: disabled ? 'default' : 'pointer',
         ...FONT, fontSize: 9,
       }}
@@ -114,6 +110,7 @@ function GhostBtn({ onClick, disabled, children }: {
 function CheckingPanel() {
   return (
     <Card>
+      {/* spinner class defined in index.css — avoids React 19 <style> hoisting issues */}
       <div className="wallet-gate-spinner" />
       <CardTitle>Verifying Wallet</CardTitle>
       <CardText>Checking your on-chain profile…</CardText>
@@ -121,12 +118,8 @@ function CheckingPanel() {
   )
 }
 
-function SignInPanel({ connecting, signIn, cancel }: {
-  connecting: boolean
-  signIn: () => void
-  cancel: () => void
-}) {
-  const pending = useGameStore(s => s.walletPending)
+function SignInPanel({ connecting }: { connecting: boolean }) {
+  const pending = useGameStore((s) => s.walletPending)
 
   return (
     <Card>
@@ -141,21 +134,17 @@ function SignInPanel({ connecting, signIn, cancel }: {
           </>
         )}
       </CardText>
-      <ActionBtn onClick={signIn} disabled={connecting}>
+      <ActionBtn onClick={() => void walletSignIn()} disabled={connecting}>
         {connecting ? 'WAITING FOR WALLET...' : '✍  SIGN IN'}
       </ActionBtn>
-      <GhostBtn onClick={cancel} disabled={connecting}>
+      <GhostBtn onClick={walletCancelSignIn} disabled={connecting}>
         CANCEL
       </GhostBtn>
     </Card>
   )
 }
 
-function NamePanel({ connecting, completeRegistration, cancel }: {
-  connecting: boolean
-  completeRegistration: (name: string) => void
-  cancel: () => void
-}) {
+function NamePanel({ connecting }: { connecting: boolean }) {
   const [name, setName] = useState('')
 
   return (
@@ -176,8 +165,8 @@ function NamePanel({ connecting, completeRegistration, cancel }: {
           onKeyDownCapture={(e) => e.stopPropagation()}
           onKeyUpCapture={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') completeRegistration(name)
-            if (e.key === 'Escape') cancel()
+            if (e.key === 'Enter') void walletCompleteRegistration(name)
+            if (e.key === 'Escape') walletCancelRegistration()
           }}
           placeholder="Wanderer"
           style={{
@@ -191,10 +180,10 @@ function NamePanel({ connecting, completeRegistration, cancel }: {
           }}
         />
       </div>
-      <ActionBtn onClick={() => completeRegistration(name)} disabled={connecting}>
+      <ActionBtn onClick={() => void walletCompleteRegistration(name)} disabled={connecting}>
         {connecting ? 'REGISTERING...' : '⚔  REGISTER & PLAY'}
       </ActionBtn>
-      <GhostBtn onClick={cancel} disabled={connecting}>
+      <GhostBtn onClick={walletCancelRegistration} disabled={connecting}>
         CANCEL
       </GhostBtn>
     </Card>
@@ -204,31 +193,23 @@ function NamePanel({ connecting, completeRegistration, cancel }: {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function WalletGate() {
-  const screen  = useGameStore(s => s.screen)
-  const phase   = useGameStore(s => s.walletPhase)
-  const { signIn, cancelSignIn, completeRegistration, cancelRegistration, connecting } = useWallet()
+  const screen     = useGameStore((s) => s.screen)
+  const phase      = useGameStore((s) => s.walletPhase)
+  const connecting = useGameStore((s) => s.walletConnecting)
 
-  // Only render on the game screen and only when not yet ready
   if (screen !== 'game' || phase === 'ready' || phase === 'idle') return null
 
   return (
-    <>
-      <style>{SPIN_STYLE}</style>
-      <div style={{
-        position: 'absolute', inset: 0, zIndex: 60,
-        background: 'rgba(4,4,14,0.88)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        pointerEvents: 'auto',
-        backdropFilter: 'blur(2px)',
-      }}>
-        {phase === 'checking'    && <CheckingPanel />}
-        {phase === 'needs-signin' && (
-          <SignInPanel connecting={connecting} signIn={signIn} cancel={cancelSignIn} />
-        )}
-        {phase === 'needs-name'  && (
-          <NamePanel connecting={connecting} completeRegistration={completeRegistration} cancel={cancelRegistration} />
-        )}
-      </div>
-    </>
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 60,
+      background: 'rgba(4,4,14,0.88)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      pointerEvents: 'auto',
+      backdropFilter: 'blur(2px)',
+    }}>
+      {phase === 'checking'     && <CheckingPanel />}
+      {phase === 'needs-signin' && <SignInPanel connecting={connecting} />}
+      {phase === 'needs-name'   && <NamePanel connecting={connecting} />}
+    </div>
   )
 }
