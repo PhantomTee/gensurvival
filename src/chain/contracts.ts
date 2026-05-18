@@ -1,6 +1,6 @@
 import { readClient, type GenLayerClient } from './client'
 import { ADDRESSES } from './addresses'
-import type { EpochInfo, LeaderboardEntry } from '../ui/store'
+import type { LeaderboardEntry } from '../ui/store'
 import type { StationType } from '../game/registry/RECIPES'
 
 async function readContract<T>(
@@ -38,8 +38,25 @@ async function writeContract(
     status: 'FINALIZED',
     interval: 2000,  // poll every 2 s instead of the 5 s default
     retries: 60,     // up to 2 min total — enough for consensus
-  })
-  return (receipt as { returnValue?: unknown }).returnValue
+  }) as {
+    returnValue?: unknown
+    txExecutionResultName?: string
+    consensus_data?: {
+      leader_receipt?: Array<{ result?: { status?: string; payload?: unknown } }>
+    }
+  }
+
+  // Guard: a tx can finalize with FINISHED_WITH_ERROR — the returnValue is then
+  // an error string, not the expected payload. Throw so callers see a real error.
+  if (receipt.txExecutionResultName === 'FINISHED_WITH_ERROR') {
+    const leader  = receipt.consensus_data?.leader_receipt?.[0]
+    const errText = typeof leader?.result?.payload === 'string'
+      ? leader.result.payload
+      : `Contract execution failed (${fn})`
+    throw new Error(errText)
+  }
+
+  return receipt.returnValue
 }
 
 export interface PlayerChainState {
@@ -200,21 +217,6 @@ export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
     const data = JSON.parse(raw) as Array<{ address: string; score: number; name?: string }>
     return data.map(e => ({ address: e.address, score: e.score, name: e.name }))
   } catch { return [] }
-}
-
-export async function getEpochInfo(): Promise<Omit<EpochInfo, 'callsToday'>> {
-  try {
-    const raw = await readContract<string>(ADDRESSES.DISASTER_ORACLE, 'get_epoch_info', [])
-    const data = JSON.parse(raw)
-    return {
-      currentEpoch: data.current_epoch,
-      inWindow: data.in_window,
-      secondsUntilNextWindow: data.seconds_until_next_window,
-      windowEndTs: data.window_end,
-    }
-  } catch {
-    return { currentEpoch: 0, inWindow: false, secondsUntilNextWindow: 0, windowEndTs: 0 }
-  }
 }
 
 export async function getCallCountToday(address: string): Promise<number> {

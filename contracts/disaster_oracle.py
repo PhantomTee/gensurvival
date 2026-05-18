@@ -2,6 +2,7 @@
 
 from genlayer import *
 import json
+import time
 
 
 EPOCH_DURATION = 6 * 3600
@@ -243,7 +244,7 @@ The JSON must use exactly this shape:
 
     @gl.public.view
     def get_epoch_info(self) -> str:
-        now = int(gl.message.timestamp)
+        now = int(time.time())
         epoch = self._epoch(now)
         epoch_start = epoch * EPOCH_DURATION
         window_end = epoch_start + CALL_WINDOW
@@ -265,5 +266,5 @@ The JSON must use exactly this shape:
 
     @gl.public.view
     def get_call_count_today(self, address: str) -> int:
-        now = int(gl.message.timestamp)
+        now = int(time.time())
         return self._calls_in_day(address, now)
