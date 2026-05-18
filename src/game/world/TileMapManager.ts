@@ -16,6 +16,10 @@ export class TileMapManager {
   private renderedChunks: Map<string, Phaser.GameObjects.RenderTexture> = new Map()
   private solidCache: Map<string, boolean> = new Map()
 
+  // Track last camera chunk coords so we only cull when the position actually changes
+  private lastCx = NaN
+  private lastCy = NaN
+
   constructor(scene: Phaser.Scene, chunks: ChunkManager) {
     this.scene = scene
     this.chunks = chunks
@@ -26,24 +30,38 @@ export class TileMapManager {
     const cx = Math.floor(camX / (CHUNK_SIZE * TILE_SIZE))
     const cy = Math.floor(camY / (CHUNK_SIZE * TILE_SIZE))
 
-    // Render nearby chunks
+    // Render nearby chunks — cap new chunk generation to 1 per frame so a
+    // cluster of unvisited chunks never freezes the game for multiple frames.
+    let newChunksThisFrame = 0
     for (let dy = -RENDER_RADIUS; dy <= RENDER_RADIUS; dy++) {
       for (let dx = -RENDER_RADIUS; dx <= RENDER_RADIUS; dx++) {
-        this.ensureChunkRendered(cx + dx, cy + dy)
+        const chunkCx = cx + dx
+        const chunkCy = cy + dy
+        const key = `${chunkCx},${chunkCy}`
+        if (!this.renderedChunks.has(key)) {
+          if (newChunksThisFrame >= 1) continue   // defer to next frame
+          newChunksThisFrame++
+        }
+        this.ensureChunkRendered(chunkCx, chunkCy)
       }
     }
 
-    // Cull distant chunks
-    const keep = new Set<string>()
-    for (let dy = -RENDER_RADIUS; dy <= RENDER_RADIUS; dy++) {
-      for (let dx = -RENDER_RADIUS; dx <= RENDER_RADIUS; dx++) {
-        keep.add(`${cx + dx},${cy + dy}`)
+    // Cull distant chunks — only when the camera moves to a new chunk, not every frame
+    if (cx !== this.lastCx || cy !== this.lastCy) {
+      this.lastCx = cx
+      this.lastCy = cy
+
+      const keep = new Set<string>()
+      for (let dy = -RENDER_RADIUS; dy <= RENDER_RADIUS; dy++) {
+        for (let dx = -RENDER_RADIUS; dx <= RENDER_RADIUS; dx++) {
+          keep.add(`${cx + dx},${cy + dy}`)
+        }
       }
-    }
-    for (const [key, rt] of this.renderedChunks) {
-      if (!keep.has(key)) {
-        rt.destroy()
-        this.renderedChunks.delete(key)
+      for (const [key, rt] of this.renderedChunks) {
+        if (!keep.has(key)) {
+          rt.destroy()
+          this.renderedChunks.delete(key)
+        }
       }
     }
   }

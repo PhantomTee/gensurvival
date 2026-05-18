@@ -102,6 +102,9 @@ export class WorldScene extends Phaser.Scene {
   // Fishing
   private fishingCooldownMs = 0
 
+  // Throttle — only push to React store at most every 100 ms
+  private lastSyncMs = 0
+
   // TNT entities with fuse state
   private tntEntities: Map<number, { fuseMs: number; tx: number; ty: number }> = new Map()
 
@@ -531,8 +534,12 @@ export class WorldScene extends Phaser.Scene {
     // ── Fishing cooldown ─────────────────────────────────────────────────────
     this.fishingCooldownMs = Math.max(0, this.fishingCooldownMs - dt)
 
-    // ── Sync React store ─────────────────────────────────────────────────────
-    this.syncReactStore()
+    // ── Sync React store (throttled — 100 ms intervals to avoid 60fps re-renders) ─
+    const nowMs = this.time.now
+    if (nowMs - this.lastSyncMs >= 100) {
+      this.lastSyncMs = nowMs
+      this.syncReactStore()
+    }
   }
 
   // ─── Combat (J key) ───────────────────────────────────────────────────────
