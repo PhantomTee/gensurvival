@@ -1,16 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-// SETUP: add to your .env file:
-//   VITE_SUPABASE_URL=https://xcaegihfnveszzexugpy.supabase.co
-//   VITE_SUPABASE_ANON_KEY=eyJ...  (Dashboard → Settings → API → anon public)
 const SUPABASE_URL      = 'https://xcaegihfnveszzexugpy.supabase.co'
-const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) ?? ''
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjYWVnaWhmbnZlc3p6ZXh1Z3B5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5NTA3MjgsImV4cCI6MjA5NDUyNjcyOH0.HNn8K6ie4uyksmYsy_pxmFMrF87qiYXwVIcY8GFX_B4'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-function ready(): boolean {
-  return SUPABASE_ANON_KEY.length > 0
-}
 
 // ─── Players ──────────────────────────────────────────────────────────────────
 
@@ -24,7 +17,6 @@ export interface PlayerRow {
 }
 
 export async function upsertPlayer(p: PlayerRow): Promise<void> {
-  if (!ready()) return
   await supabase.from('players').upsert({
     address:       p.address.toLowerCase(),
     name:          p.name,
@@ -45,7 +37,6 @@ export async function upsertHouse(
   damaged: boolean,
   quality: number,
 ): Promise<void> {
-  if (!ready()) return
   await supabase.from('houses').upsert({
     token_id:      tokenId,
     owner_address: ownerAddress.toLowerCase(),
@@ -69,7 +60,6 @@ export async function logCraft(
   deduct: Record<string, number>,
   grant: Record<string, number>,
 ): Promise<void> {
-  if (!ready()) return
   await supabase.from('craft_log').insert({
     player_address: address.toLowerCase(),
     recipe_id:      recipeId,
@@ -88,7 +78,6 @@ export async function logAIEvent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: Record<string, any>,
 ): Promise<void> {
-  if (!ready()) return
   await supabase.from('ai_events').insert({
     player_address:      address.toLowerCase(),
     epoch,
