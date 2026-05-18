@@ -8,6 +8,7 @@
 # not class-name-based) so the rename has no effect on deployed ABI.
 
 from genlayer import *
+from datetime import datetime, timezone
 import json
 
 
@@ -64,6 +65,12 @@ PLACEABLE_ITEMS = {
 FISHING_DROPS  = ["FISH", "FISH", "FISH", "WOOD_STICK", "STONE"]  # 60 % fish
 MINEABLE_DROPS = {"ROCK": "STONE", "COAL_ORE": "COAL", "IRON_ORE": "IRON_ORE"}
 
+# Material cost for minting a house — must match RECIPES["house_deed"]["inputs"]
+HOUSE_MATERIAL_COST = {
+    "WOOD_PLANK": 40, "STONE": 30, "WOOD_WALL": 16,
+    "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5,
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 class GenSurvivalGame(gl.Contract):
@@ -91,6 +98,15 @@ class GenSurvivalGame(gl.Contract):
         self.next_house_id = u256(1)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _now(self) -> int:
+        raw = gl.message_raw["datetime"]
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
 
     def _coord_key(self, addr_hex: str, x: int, y: int) -> str:
         return addr_hex + ":" + str(x) + ":" + str(y)
@@ -153,7 +169,7 @@ class GenSurvivalGame(gl.Contract):
             "days_survived": 0,
             "house_count":   0,
             "score":         0,
-            "updated_at":    int(gl.message.timestamp),
+            "updated_at":    self._now(),
         }
 
     def _get_state(self, addr_hex: str) -> dict:
@@ -179,7 +195,7 @@ class GenSurvivalGame(gl.Contract):
     def _save_state(self, addr_hex: str, state: dict) -> None:
         state["address"]    = addr_hex
         state["score"]      = self._score(state)
-        state["updated_at"] = int(gl.message.timestamp)
+        state["updated_at"] = self._now()
         self.player_states[addr_hex] = json.dumps(state, sort_keys=True)
 
         profile = json.loads(self.players[addr_hex])
@@ -235,13 +251,13 @@ class GenSurvivalGame(gl.Contract):
         assert len(player_name) > 0, "Player name cannot be empty"
         assert addr_hex not in self.players, "Already registered"
 
-        timestamp = u256(int(gl.message.timestamp))
+        timestamp = u256(self._now())
         profile = {
             "address":      addr_hex,
             "name":         player_name,
             "house_count":  0,
             "score":        0,
-            "registered_at": int(gl.message.timestamp),
+            "registered_at": self._now(),
         }
         state = self._default_state(addr_hex, player_name)
         self.players[addr_hex]       = json.dumps(profile, sort_keys=True)
@@ -428,12 +444,6 @@ class GenSurvivalGame(gl.Contract):
                     floor_count += 1
         return floor_count > 0
 
-    # Material cost for minting a house — must match RECIPES["house_deed"]["inputs"]
-    HOUSE_MATERIAL_COST = {
-        "WOOD_PLANK": 40, "STONE": 30, "WOOD_WALL": 16,
-        "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5,
-    }
-
     @gl.public.write
     def mint_house(self, x: int, y: int, width: int, height: int, name: str) -> u256:
         addr_hex = gl.message.sender_address.as_hex
@@ -443,7 +453,7 @@ class GenSurvivalGame(gl.Contract):
 
         # Validate and deduct materials atomically — prevents minting without paying
         state = self._get_state(addr_hex)
-        self._deduct_items(state, self.HOUSE_MATERIAL_COST, 1)
+        self._deduct_items(state, HOUSE_MATERIAL_COST, 1)
 
         house_id              = self.next_house_id
         self.next_house_id    = self.next_house_id + u256(1)
@@ -457,7 +467,7 @@ class GenSurvivalGame(gl.Contract):
             "name":      name if len(name) > 0 else "House",
             "quality":   1,
             "damaged":   False,
-            "minted_at": int(gl.message.timestamp),
+            "minted_at": self._now(),
         }
         self.houses[house_id] = json.dumps(meta, sort_keys=True)
 
@@ -560,7 +570,7 @@ class GenSurvivalGame(gl.Contract):
         meta["damaged"]       = safe_damaged
         meta["quality"]       = quality
         meta["last_event_id"] = event_id
-        meta["updated_at"]    = int(gl.message.timestamp)
+        meta["updated_at"]    = self._now()
         self.houses[hid]      = json.dumps(meta, sort_keys=True)
         self.used_ai_events[used_key] = True
 

@@ -1,8 +1,9 @@
 # { "Depends": "py-genlayer:test" }
 
 from genlayer import *
+from datetime import datetime, timezone
 import json
-import time
+import re
 
 
 EPOCH_DURATION = 6 * 3600
@@ -24,6 +25,15 @@ class DisasterOracle(gl.Contract):
 
     def __init__(self) -> None:
         pass
+
+    def _now(self) -> int:
+        raw = gl.message_raw["datetime"]
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
 
     def _epoch(self, ts: int) -> int:
         return ts // EPOCH_DURATION
@@ -76,7 +86,7 @@ class DisasterOracle(gl.Contract):
     @gl.public.write
     def submit_player_stats(self, stats_json: str) -> str:
         addr_hex = gl.message.sender_address.as_hex
-        now = int(gl.message.timestamp)
+        now = self._now()
 
         assert len(stats_json) > 0, "Stats JSON cannot be empty"
         json.loads(stats_json)
@@ -107,9 +117,9 @@ class DisasterOracle(gl.Contract):
         player_stats_snapshot = effective_stats
         epoch_num = epoch
 
-        def compute_event() -> str:
+        def fetch_event_context() -> str:
             # Fetch compact RSS/text headlines only — smaller responses improve
-            # consensus stability (less variance in what each validator sees).
+            # equivalence stability (less variance in what each validator sees).
             news_texts = []
             rss_sources = [
                 "https://feeds.bbci.co.uk/news/rss.xml",
@@ -121,7 +131,6 @@ class DisasterOracle(gl.Contract):
                     response = gl.nondet.web.get(url)
                     body = response.body.decode("utf-8", errors="replace")
                     # Extract only title/description tags — ~500 chars per source
-                    import re
                     titles = re.findall(r'<title>(.*?)</title>', body, re.DOTALL)
                     snippet = " | ".join(t.strip() for t in titles[1:8])  # skip feed title
                     news_texts.append(snippet[:500])
@@ -131,74 +140,84 @@ class DisasterOracle(gl.Contract):
             combined_news = " || ".join(news_texts)
             stats = json.loads(player_stats_snapshot)
 
-            prompt = f"""
+            return json.dumps({
+                "current_real_world_news": combined_news,
+                "player_game_state": {
+                    "health": stats.get("health", 0),
+                    "max_health": stats.get("max_health", 3.0),
+                    "energy": stats.get("energy", 0),
+                    "max_energy": stats.get("max_energy", 10.0),
+                    "xp": stats.get("xp", 0),
+                    "days_survived": stats.get("days_survived", 0),
+                    "zombies_killed": stats.get("zombies_killed", 0),
+                    "resources_gathered": stats.get("resources_gathered", 0),
+                    "inventory": stats.get("inventory", {}),
+                    "house_token_ids": stats.get("house_token_ids", []),
+                    "epoch_number": epoch_num,
+                },
+            }, sort_keys=True)
+
+        task = """
 You are an AI game master for a survival game called GenSurvival.
-
-A player has submitted their stats for an AI-driven world event.
-
-Use current real-world news headlines together with the player's game state.
+Use the provided real-world news headlines together with the player's game state.
 Decide what kind of event occurs in their game world.
 
-CURRENT REAL-WORLD NEWS:
-{combined_news}
-
-PLAYER GAME STATE:
-Health: {stats.get("health", 0)} / {stats.get("max_health", 3.0)}
-Energy: {stats.get("energy", 0)} / {stats.get("max_energy", 10.0)}
-Experience XP: {stats.get("xp", 0)}
-Days survived: {stats.get("days_survived", 0)}
-Zombies killed: {stats.get("zombies_killed", 0)}
-Resources gathered: {stats.get("resources_gathered", 0)}
-Inventory: {json.dumps(stats.get("inventory", {{}}))}
-Houses owned: {stats.get("house_token_ids", [])}
-Epoch number: {epoch_num}
-
-DECISION RULES:
+Decision rules:
 1. News themes of disaster, conflict, war, crisis, catastrophe should lean disaster.
 2. News themes of peace, science, cooperation, abundance, celebration should lean good.
 3. Mixed or neutral news should lean neutral with small effects.
 4. Weak players should receive gentler negative events.
 5. Strong players can receive harsher disasters or bigger rewards.
 6. House damage can only happen if the player owns at least one house.
-7. Resource removals must be realistic — never remove items the player does not have.
+7. Resource removals must be realistic and must not remove more than the inventory shown.
 
 Return only valid JSON. No markdown. No explanation outside the JSON.
-
-Allowed values for event_type: "disaster", "good", "neutral"
-
+Allowed values for event_type: "disaster", "good", "neutral".
 The JSON must use exactly this shape:
-{{
+{
   "event_type": "disaster",
   "event_name": "string",
   "description": "string",
   "health_delta": 0,
   "energy_delta": 0,
   "xp_delta": 0,
-  "inventory_delta": {{}},
+  "inventory_delta": {},
   "house_damaged": false,
   "house_damage_amount": 0,
   "house_quality_delta": 0,
   "reasoning": "string"
-}}
+}
 """
 
-            raw = gl.nondet.exec_prompt(prompt)
-            raw = raw.strip()
+        criteria = """
+The answer must be valid JSON only, with no markdown.
+It must contain event_type, event_name, description, health_delta, energy_delta,
+xp_delta, inventory_delta, house_damaged, house_damage_amount,
+house_quality_delta, and reasoning.
+event_type must be exactly one of disaster, good, or neutral.
+inventory_delta must be a JSON object whose values are integers.
+If the player owns no houses, house_damaged must be false and house damage fields must be zero.
+Negative inventory_delta values must be plausible from the provided inventory.
+The event must be consistent with the provided headlines and player state.
+"""
 
-            if raw.startswith("```"):
-                raw = raw.replace("```json", "")
-                raw = raw.replace("```", "")
-                raw = raw.strip()
+        # GenLayer docs require nondeterministic web/LLM work to be reachable
+        # through an equivalence-principle block. prompt_non_comparative lets the
+        # leader produce the game-master JSON while validators judge it against
+        # the same fetched context and criteria.
+        result_json = gl.eq_principle.prompt_non_comparative(
+            fetch_event_context,
+            task=task,
+            criteria=criteria,
+        )
 
-            return raw
+        result_json = result_json.strip()
+        if result_json.startswith("```"):
+            result_json = result_json.replace("```json", "")
+            result_json = result_json.replace("```", "")
+            result_json = result_json.strip()
 
-        # Use unchecked_eq: the leader validator's LLM result is accepted without
-        # requiring exact string consensus from all validators.
-        # strict_eq is incompatible with live-web + LLM — validators see different
-        # page content at different times so they will never produce identical strings.
-        result_json = gl.eq_principle.unchecked_eq(compute_event)
-
-        # All storage writes happen after strict_eq returns — never inside the nondet function
+        # All storage writes happen after the equivalence-principle block returns.
         parsed = json.loads(result_json)
 
         assert "event_type" in parsed, "AI event missing event_type"
@@ -244,7 +263,7 @@ The JSON must use exactly this shape:
 
     @gl.public.view
     def get_epoch_info(self) -> str:
-        now = int(time.time())
+        now = self._now()
         epoch = self._epoch(now)
         epoch_start = epoch * EPOCH_DURATION
         window_end = epoch_start + CALL_WINDOW
@@ -266,5 +285,5 @@ The JSON must use exactly this shape:
 
     @gl.public.view
     def get_call_count_today(self, address: str) -> int:
-        now = int(time.time())
+        now = self._now()
         return self._calls_in_day(address, now)
