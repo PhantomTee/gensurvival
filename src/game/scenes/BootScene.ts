@@ -36,8 +36,9 @@ export class BootScene extends Phaser.Scene {
     }
 
     // ── Entity static images ──────────────────────────────────────────────────
+    // Note: 'tree' is generated procedurally in create() — not loaded from file.
     for (const name of ['bench', 'chest', 'furnace', 'furnace_lit',
-                        'torch', 'lantern', 'fish', 'flower', 'tree', 'tnt']) {
+                        'torch', 'lantern', 'fish', 'flower', 'tnt']) {
       this.load.image(name, `/assets/entities/${name}.png`)
     }
 
@@ -434,6 +435,48 @@ export class BootScene extends Phaser.Scene {
       }
 
       this.textures.addCanvas(key, c)
+    }
+
+    // ── Procedural tree texture (16×32 — two tiles tall) ─────────────────────
+    // The PNG asset was only a crown stub. Drawing the full tree in code gives
+    // us a layered crown + trunk that looks complete at game scale.
+    {
+      const tc = document.createElement('canvas')
+      tc.width  = 16
+      tc.height = 32
+      const cx  = tc.getContext('2d')!
+      cx.clearRect(0, 0, 16, 32)
+
+      // Crown — 4 tiers, each wider than the one above
+      const tiers = [
+        { y: 0,  h: 4,  x: 6, w: 4,  base: '#52d43c', hi: '#68ee50', dk: '#2d9422' },
+        { y: 4,  h: 5,  x: 4, w: 8,  base: '#3dba28', hi: '#52d43c', dk: '#237016' },
+        { y: 9,  h: 6,  x: 2, w: 12, base: '#2d9420', hi: '#3dba28', dk: '#1a5c10' },
+        { y: 15, h: 7,  x: 1, w: 14, base: '#1f7016', hi: '#2d9420', dk: '#124808' },
+      ]
+      for (const { y, h, x, w, base, hi, dk } of tiers) {
+        // Fill
+        cx.fillStyle = base
+        cx.fillRect(x, y, w, h)
+        // 1-px light column — ~1/3 from left
+        cx.fillStyle = hi
+        cx.fillRect(x + Math.floor(w / 3), y, 1, h)
+        // 1-px dark outline on left + right + bottom
+        cx.fillStyle = dk
+        cx.fillRect(x, y, 1, h)
+        cx.fillRect(x + w - 1, y, 1, h)
+        cx.fillRect(x, y + h - 1, w, 1)
+      }
+
+      // Trunk — 4 px wide, 10 px tall
+      cx.fillStyle = '#5c3510'
+      cx.fillRect(6, 22, 4, 10)
+      cx.fillStyle = '#7a4a20'  // highlight stripe
+      cx.fillRect(7, 22, 1, 10)
+      cx.fillStyle = '#3d2008'  // shadow stripe
+      cx.fillRect(9, 22, 1, 10)
+
+      this.textures.addCanvas('tree', tc)
     }
 
     this.scene.start('MainMenuScene')
