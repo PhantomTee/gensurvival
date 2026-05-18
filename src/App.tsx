@@ -28,7 +28,12 @@ function App() {
   const dayNumber     = useGameStore((s) => s.playerStats?.dayNumber ?? 0)
   const lastDayRef    = useRef(0)
   const prevScreenRef = useRef<'menu' | 'game'>('menu')
-  const chain         = useChainActions()
+  const chain    = useChainActions()
+  // Stable ref — lets the mount-only event-listener effect always call the
+  // current chain without listing `chain` as a dependency (which would
+  // re-create listeners every time setPlayerStats fires).
+  const chainRef = useRef(chain)
+  chainRef.current = chain
 
   // ── Mount Phaser once ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -99,25 +104,27 @@ function App() {
     prevScreenRef.current = screen
   }, [screen])
 
+  // Mount-only: listeners use chainRef.current so they always call the latest
+  // chain functions without this effect needing to re-run (no [chain] dep).
   useEffect(() => {
     const handleMineTile = ((e: CustomEvent) => {
       const { x, y, terrainType } = e.detail as { x: number; y: number; terrainType: string }
-      void chain.doMineTile(x, y, terrainType)
+      void chainRef.current.doMineTile(x, y, terrainType)
     }) as EventListener
 
     const handleChopTree = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chain.doChopTree(x, y)
+      void chainRef.current.doChopTree(x, y)
     }) as EventListener
 
     const handlePlaceBuild = ((e: CustomEvent) => {
       const { x, y, itemId } = e.detail as { x: number; y: number; itemId: string }
-      void chain.doPlaceBuildTile(x, y, itemId)
+      void chainRef.current.doPlaceBuildTile(x, y, itemId)
     }) as EventListener
 
     const handleFishAction = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chain.doFishTile(x, y)
+      void chainRef.current.doFishTile(x, y)
     }) as EventListener
 
     window.addEventListener('gensurvival:mineTile', handleMineTile)
@@ -131,7 +138,7 @@ function App() {
       window.removeEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
       window.removeEventListener('gensurvival:fishAction', handleFishAction)
     }
-  }, [chain])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!walletAddress || screen !== 'game') return
