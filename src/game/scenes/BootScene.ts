@@ -209,11 +209,6 @@ export class BootScene extends Phaser.Scene {
             )
           }
 
-          // Second 5×5 grid at a different scale for crack/vein patterns
-          const grid2: number[][] = Array.from({ length: GRID }, (_, gy) =>
-            Array.from({ length: GRID }, (_, gx) => ph(gx + 7, gy + 3, v ^ 0x3a) / 255)
-          )
-
           // Apply variant brightness + smooth gradient + type overlays
           for (let py = 0; py < 16; py++) {
             for (let px = 0; px < 16; px++) {

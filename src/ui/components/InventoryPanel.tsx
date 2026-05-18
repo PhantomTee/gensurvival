@@ -11,10 +11,6 @@ const RPG_PANEL: React.CSSProperties = {
   boxShadow: '3px 3px 0 #000, inset 0 1px 0 rgba(255,200,80,0.1)',
 }
 
-function itemIconUrl(id: ItemId): string {
-  return `/assets/items/${id.toLowerCase()}.png`
-}
-
 const EQUIPPABLE_TAGS = new Set(['WEAPON', 'RANGED', 'TOOL_AXE', 'TOOL_PICK', 'TOOL_SHOVEL', 'TOOL_HOE', 'TOOL_ROD', 'PLACEABLE', 'FOOD'])
 
 function isEquippable(id: ItemId): boolean {

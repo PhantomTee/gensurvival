@@ -7,10 +7,6 @@ import { ItemIcon } from './ItemIcon'
 const SLOT_SIZE = 52
 const SLOTS = 5
 
-function itemIconUrl(id: ItemId): string {
-  return `/assets/items/${id.toLowerCase()}.png`
-}
-
 export function Hotbar() {
   const stats = useGameStore((s) => s.playerStats)
   if (!stats) return null

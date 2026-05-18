@@ -11,7 +11,7 @@
 import { useEffect, useCallback } from 'react'
 import { useGameStore } from '../store'
 import { getOrCreateSeed } from '../../storage/SeedStorage'
-import { loadSession, clearSession, saveSession } from '../../storage/WalletSession'
+import { loadSession, clearSession } from '../../storage/WalletSession'
 import { isRegistered, getProfile } from '../../chain/contracts'
 import { GENLAYER_STUDIONET, GENLAYER_STUDIONET_CHAIN_ID_HEX } from '../../chain/client'
 import { toast } from '../toast'

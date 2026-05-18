@@ -33,7 +33,10 @@ function App() {
   // current chain without listing `chain` as a dependency (which would
   // re-create listeners every time setPlayerStats fires).
   const chainRef = useRef(chain)
-  chainRef.current = chain
+
+  useEffect(() => {
+    chainRef.current = chain
+  }, [chain])
 
   // ── Mount Phaser once ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -46,6 +49,7 @@ function App() {
       height:          window.innerHeight,
       backgroundColor: '#0a0a1a',
       pixelArt:        true,   // nearest-neighbour filtering — no pixel bleeding at seams
+      audio:           { noAudio: true },
       scene:           [BootScene, MainMenuScene, WorldScene, PauseScene],
       physics: {
         default: 'arcade',
@@ -138,7 +142,7 @@ function App() {
       window.removeEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
       window.removeEventListener('gensurvival:fishAction', handleFishAction)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!walletAddress || screen !== 'game') return

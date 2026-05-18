@@ -4,6 +4,8 @@ import { HOUSE_COST } from '../../game/constants'
 import { ITEMS } from '../../game/registry/ITEMS'
 import type { ItemId } from '../../game/registry/ITEMS'
 
+const EMPTY_INVENTORY: Record<string, number> = {}
+
 export function HouseMintModal() {
   const prompt      = useGameStore((s) => s.houseMintPrompt)
   const dismiss     = useGameStore((s) => s.dismissHouseMint)
@@ -11,7 +13,7 @@ export function HouseMintModal() {
   const txStatus    = useGameStore((s) => s.txStatus)
   // Always use the live inventory from playerStats — the prompt snapshot can be
   // stale if the player crafted materials after the modal opened.
-  const liveInv     = useGameStore((s) => s.playerStats?.inventory ?? {})
+  const liveInv     = useGameStore((s) => s.playerStats?.inventory ?? EMPTY_INVENTORY)
   const { doMintHouse } = useChainActions()
 
   if (!prompt) return null
