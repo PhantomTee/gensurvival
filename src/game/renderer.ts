@@ -37,8 +37,14 @@ export function pickRendererType(): number {
     const framebuffer = gl.createFramebuffer()
     if (!texture || !framebuffer) return Phaser.CANVAS
 
+    // Probe at something close to the size Phaser will really allocate. A 2x2
+    // framebuffer succeeds on drivers where a viewport-sized one does not, so
+    // the small probe passed and the game still died on the first real frame.
+    const probeW = Math.min(2048, Math.max(512, window.innerWidth || 1024))
+    const probeH = Math.min(2048, Math.max(512, window.innerHeight || 768))
+
     gl.bindTexture(gl.TEXTURE_2D, texture)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, probeW, probeH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
 
@@ -49,10 +55,13 @@ export function pickRendererType(): number {
     gl.deleteFramebuffer(framebuffer)
     gl.deleteTexture(texture)
 
-    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+    // A driver error raised during the probe counts as failure too.
+    const glError = gl.getError()
+
+    if (status !== gl.FRAMEBUFFER_COMPLETE || glError !== gl.NO_ERROR) {
       console.warn(
-        `[renderer] WebGL framebuffers unusable (status 0x${status.toString(16)}) — ` +
-          'falling back to the Canvas renderer.',
+        `[renderer] WebGL framebuffers unusable (status 0x${status.toString(16)}, ` +
+          `error 0x${glError.toString(16)}) — falling back to the Canvas renderer.`,
       )
       return Phaser.CANVAS
     }

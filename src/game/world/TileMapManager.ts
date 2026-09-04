@@ -3,7 +3,10 @@ import type { ChunkManager } from './ChunkManager'
 import { TILES, TILE_BY_INDEX } from '../registry/TILES'
 import { TILE_SIZE, CHUNK_SIZE } from '../constants'
 
-const RENDER_RADIUS = 3   // chunks rendered around the camera
+// Chunks rendered around the camera. 3 was enough at zoom 3; at zoom 2 the
+// viewport covers more world, and on a wide monitor the old radius left void
+// at the screen edges.
+const RENDER_RADIUS = 4
 
 /**
  * Renders the tile world using a pool of Phaser.GameObjects.TileSprite /

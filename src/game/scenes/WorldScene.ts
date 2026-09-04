@@ -19,6 +19,10 @@ import { AISystem } from '../systems/AISystem'
 import { InventorySystem } from '../systems/InventorySystem'
 import { makeDayNight, updateDayNight, type DayNightState } from '../systems/DayNightSystem'
 import { TILE_SIZE, CHUNK_SIZE, DAY_STAGES } from '../constants'
+
+/** Chunks around the player kept populated with world-gen entities. Must cover
+ *  at least the rendered area (RENDER_RADIUS) or you see terrain with nothing on it. */
+const ENTITY_SPAWN_RADIUS = 4
 import { TILES, TILE_BY_INDEX } from '../registry/TILES'
 import { addItem, removeItem } from '../components'
 import { Entity } from '../entities/Entity'
@@ -95,6 +99,10 @@ export class WorldScene extends Phaser.Scene {
 
   // Dog taming
   private tamedDogId: number | null = null
+  /** Chunks whose world-gen entities have been spawned, so none spawn twice. */
+  private spawnedChunks = new Set<string>()
+  private lastEntityChunkX = Number.NaN
+  private lastEntityChunkY = Number.NaN
 
   // E key for eating
   private keyE!: Phaser.Input.Keyboard.Key
@@ -189,11 +197,13 @@ export class WorldScene extends Phaser.Scene {
     const playerCX = Math.floor(px / (CHUNK_SIZE * TILE_SIZE))
     const playerCY = Math.floor(py / (CHUNK_SIZE * TILE_SIZE))
     this.chunks.preload(playerCX, playerCY, 3)
-    this.spawnChunkEntities(playerCX, playerCY, 3)
+    this.spawnChunkEntities(playerCX, playerCY, ENTITY_SPAWN_RADIUS)
 
     // ── Camera ───────────────────────────────────────────────────
     this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1)
-    this.cameras.main.setZoom(3)
+    // Zoom 2 rather than 3: a 16 px tile lands on 32 screen px, showing about
+    // 2.25x more of the world without touching any art.
+    this.cameras.main.setZoom(2)
 
     // ── Day / Night overlay ──────────────────────────────────────
     // makeDayNight() syncs to real UTC+1 clock — never override totalElapsedMs
@@ -345,11 +355,25 @@ export class WorldScene extends Phaser.Scene {
 
   // ─── Chunk entity spawning ─────────────────────────────────────────────────
 
+  /** Spawns entities for any chunk the player has come near but not yet loaded. */
+  private streamChunkEntities(): void {
+    const cx = Math.floor(this.player.x / (CHUNK_SIZE * TILE_SIZE))
+    const cy = Math.floor(this.player.y / (CHUNK_SIZE * TILE_SIZE))
+    if (cx === this.lastEntityChunkX && cy === this.lastEntityChunkY) return
+    this.lastEntityChunkX = cx
+    this.lastEntityChunkY = cy
+    this.spawnChunkEntities(cx, cy, ENTITY_SPAWN_RADIUS)
+  }
+
+
   private spawnChunkEntities(cxCentre: number, cyCentre: number, radius: number): void {
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
         const cx = cxCentre + dx
         const cy = cyCentre + dy
+        const chunkKey = `${cx},${cy}`
+        if (this.spawnedChunks.has(chunkKey)) continue
+        this.spawnedChunks.add(chunkKey)
         const chunk = this.chunks.getOrGenerate(cx, cy)
         for (const spawn of chunk.spawns) {
           const spx = spawn.tileX * TILE_SIZE + TILE_SIZE / 2
@@ -425,6 +449,12 @@ export class WorldScene extends Phaser.Scene {
     // ── Death drops BEFORE cleanup ───────────────────────────────────────────
     this.checkDeathDrops()
     this.em.cleanup()
+
+    // ── Stream entities into newly entered chunks ────────────────────────────
+    // spawnChunkEntities used to run once in create(), so trees, chickens,
+    // zombies and ground items existed only in the 7x7 chunks around spawn and
+    // the rest of the world was permanently empty.
+    this.streamChunkEntities()
 
     // ── Tree respawn countdown ───────────────────────────────────────────────
     this.tickTreeRespawn(dt)
@@ -721,6 +751,26 @@ export class WorldScene extends Phaser.Scene {
             return
           }
         }
+      }
+    }
+
+    // Chicken catching: F beside a chicken. Catching yields the same meat as
+    // killing one, so it is a quieter alternative rather than a better one.
+    {
+      let nearestChicken: Entity | null = null
+      let nearestDist = RANGE
+      for (const chicken of this.em.ofType('CHICKEN')) {
+        const d = Math.hypot(chicken.x - this.player.x, chicken.y - this.player.y)
+        if (d < nearestDist) { nearestDist = d; nearestChicken = chicken }
+      }
+      if (nearestChicken) {
+        const inv = this.player.components.inventory!
+        const meat = Math.random() < 0.7 ? 1 : 2
+        addItem(inv, 'RAW_MEAT' as ItemId, meat)
+        nearestChicken.destroy()
+        this.showHint(`Caught a chicken  +${meat} raw meat`, '#ffdd88')
+        this.syncReactStore()
+        return
       }
     }
 

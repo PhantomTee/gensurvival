@@ -44,7 +44,7 @@ export class MainMenuScene extends Phaser.Scene {
     const hints = [
       'WASD — move',
       'J — attack / mine',
-      'F — pick up',
+      'F — pick up / catch chicken',
       'I — inventory',
       'K — interact',
       'M — map',

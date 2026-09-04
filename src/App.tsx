@@ -43,9 +43,9 @@ function App() {
   useEffect(() => {
     if (gameRef.current || !canvasRef.current) return
 
-    gameRef.current = new Phaser.Game({
-      type:            pickRendererType(),
-      parent:          canvasRef.current,
+    const makeGame = (rendererType: number) => new Phaser.Game({
+      type:            rendererType,
+      parent:          canvasRef.current!,
       width:           window.innerWidth,
       height:          window.innerHeight,
       backgroundColor: '#0a0a1a',
@@ -61,6 +61,23 @@ function App() {
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
     })
+
+    gameRef.current = makeGame(pickRendererType())
+
+    // Last-resort renderer recovery. pickRendererType() probes what it can, but
+    // some drivers pass every probe and still fail when Phaser allocates its own
+    // framebuffers — the error escapes as an uncaught exception and the player is
+    // left on a black canvas. Catch that once and rebuild on the Canvas renderer.
+    let rebuildingRenderer = false
+    const handleRendererCrash = (event: ErrorEvent) => {
+      const message = event.message ?? ''
+      if (rebuildingRenderer || !message.includes('Framebuffer status')) return
+      rebuildingRenderer = true
+      console.warn('[renderer] WebGL failed at runtime — rebuilding with the Canvas renderer.')
+      try { gameRef.current?.destroy(true) } catch { /* already torn down */ }
+      gameRef.current = makeGame(Phaser.CANVAS)
+    }
+    window.addEventListener('error', handleRendererCrash)
 
     // Bridge Phaser → React: apply AI event and craft deltas
     const handleAIEvent = ((e: CustomEvent) => {
@@ -86,6 +103,7 @@ function App() {
     window.addEventListener('gensurvival:craftDelta', handleCraftDelta)
 
     return () => {
+      window.removeEventListener('error', handleRendererCrash)
       window.removeEventListener('gensurvival:aiEvent', handleAIEvent)
       window.removeEventListener('gensurvival:craftDelta', handleCraftDelta)
       gameRef.current?.destroy(true)
@@ -220,7 +238,7 @@ const KEY_HINTS = [
   { key: 'WASD', label: 'Move' },
   { key: '1-5', label: 'Select hotbar slot' },
   { key: 'J', label: 'Attack / Mine / Shoot' },
-  { key: 'F', label: 'Pick up / Tame dog' },
+  { key: 'F', label: 'Pick up / Catch chicken / Tame dog' },
   { key: 'E', label: 'Eat equipped food' },
   { key: 'M', label: 'Map (WASD to pan)' },
   { key: 'K', label: 'Interact / Fish' },
