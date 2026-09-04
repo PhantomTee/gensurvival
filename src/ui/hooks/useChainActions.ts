@@ -21,6 +21,9 @@ import {
   fishTile,
   mineTile,
   mintHouse,
+  getHouse,
+  craftFreeform,
+  refreshWorld,
   placeBuildTile,
   triggerWorldEvent,
   updateProfile,
@@ -142,6 +145,7 @@ export function useChainActions() {
   // ── doMintHouse ──────────────────────────────────────────────────────────
   const doMintHouse = useCallback(async (prompt: {
     tileX: number; tileY: number; widthTiles: number; heightTiles: number
+    name?: string; description?: string
   }) => {
     const store = useGameStore.getState()
     if (!store.walletAddress) { toast.error('Connect your wallet to mint a house.'); return }
@@ -149,7 +153,15 @@ export function useChainActions() {
     store.setTxStatus(true, 'Minting verified house on-chain...')
     try {
       const client  = createWriteClient(store.walletAddress)
-      const tokenId = await mintHouse(client, prompt.tileX, prompt.tileY, prompt.widthTiles, prompt.heightTiles, 'My House')
+      const houseName = prompt.name?.trim() || 'My House'
+      // The contract's LLM grades the actual placed tiles and ignores an
+      // inflated claim, so this description shapes flavour, not rarity.
+      const houseDesc = prompt.description?.trim() || 'A shelter built to survive the night.'
+      const tokenId = await mintHouse(
+        client, prompt.tileX, prompt.tileY, prompt.widthTiles, prompt.heightTiles,
+        houseName, houseDesc,
+      )
+      const graded = await getHouse(tokenId)
 
       const newHouse = {
         tokenId,
@@ -157,25 +169,91 @@ export function useChainActions() {
         tileY:      prompt.tileY,
         widthTiles: prompt.widthTiles,
         heightTiles: prompt.heightTiles,
-        quality:    1,
+        quality:    graded?.quality ?? 1,
         damaged:    false,
-        name:       'My House',
+        name:       houseName,
       }
       const s = useGameStore.getState()
       s.setHouses([...s.houses, newHouse])
       s.dismissHouseMint()
       s.setTxStatus(false, '')
-      toast.success(`House minted! Token #${tokenId}`)
+      toast.success(
+        graded
+          ? `${graded.structure_type} minted — quality ${graded.quality}/5 (#${tokenId})`
+          : `House minted! Token #${tokenId}`,
+      )
 
       upsertHouse(tokenId, store.walletAddress, {
         x: prompt.tileX, y: prompt.tileY,
         widthTiles: prompt.widthTiles, heightTiles: prompt.heightTiles,
-        name: 'My House', quality: 1,
-      }, false, 1).catch(() => { /* best-effort */ })
+        name: houseName, quality: graded?.quality ?? 1,
+      }, false, graded?.quality ?? 1).catch(() => { /* best-effort */ })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       useGameStore.getState().setTxStatus(false, '')
       toast.error(`House mint failed: ${msg}`)
+    }
+  }, [])
+
+  // ── doCraftFreeform ──────────────────────────────────────────────────────
+  // The open counterpart to doCraft: instead of looking up a fixed recipe, the
+  // contract's LLM rules on what the materials plausibly make. Materials are
+  // consumed either way - a failed experiment still costs.
+  const doCraftFreeform = useCallback(async (
+    inputs: Record<string, number>,
+    intent: string,
+  ) => {
+    const store = useGameStore.getState()
+    if (!store.walletAddress) { toast.error('Connect your wallet to experiment.'); return null }
+
+    store.setTxStatus(true, 'Improvising... (~30s)')
+    try {
+      const client = createWriteClient(store.walletAddress)
+      const result = await craftFreeform(client, inputs, intent)
+
+      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', {
+        detail: { deduct: result.deduct, grant: result.grant },
+      }))
+      useGameStore.getState().setTxStatus(false, '')
+
+      if (result.success && Object.keys(result.grant).length > 0) {
+        const made = Object.entries(result.grant)
+          .map(([id, n]) => `${n}x ${id.replace(/_/g, ' ')}`).join(', ')
+        toast.success(`Made: ${made}`)
+      } else {
+        toast.error(result.verdict || 'Nothing useful came of it — materials lost.')
+      }
+      return result
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      useGameStore.getState().setTxStatus(false, '')
+      toast.error(`Experiment failed: ${msg}`)
+      return null
+    }
+  }, [])
+
+  // ── doRefreshWorld ───────────────────────────────────────────────────────
+  // Permissionless: whoever calls first this epoch writes the world everyone
+  // else then plays in.
+  const doRefreshWorld = useCallback(async () => {
+    const store = useGameStore.getState()
+    if (!store.walletAddress) { toast.error('Connect your wallet to read the world.'); return null }
+
+    store.setTxStatus(true, "Reading today's headlines into the world (~30s)...")
+    try {
+      const client = createWriteClient(store.walletAddress)
+      const era = await refreshWorld(client)
+      useGameStore.getState().setWorldEra(era)
+      useGameStore.getState().setTxStatus(false, '')
+      toast.info(`A new era: ${era.era_name}`)
+      return era
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      useGameStore.getState().setTxStatus(false, '')
+      toast.error(msg.includes('already been written')
+        ? "This epoch's world is already written."
+        : `World refresh failed: ${msg}`)
+      return null
     }
   }, [])
 
@@ -263,7 +341,7 @@ export function useChainActions() {
 
   // Stable object — only created once because all callbacks have [] deps
   return useMemo(
-    () => ({ doCraft, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doSubmitEvent, doFishTile }),
-    [doCraft, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doSubmitEvent, doFishTile],
+    () => ({ doCraft, doCraftFreeform, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile }),
+    [doCraft, doCraftFreeform, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile],
   )
 }

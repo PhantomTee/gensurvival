@@ -169,14 +169,85 @@ export async function mintHouse(
   width: number,
   height: number,
   name: string,
+  description: string,
 ): Promise<number> {
   const tokenId = await writeContract(
     client,
     ADDRESSES.PLAYER_REGISTRY,
     'mint_house',
-    [x, y, width, height, name],
+    [x, y, width, height, name, description],
   )
   return Number(tokenId)
+}
+
+/** The shared, AI-authored world era every player is currently subject to. */
+export interface WorldEra {
+  epoch: number
+  era_name: string
+  description: string
+  danger_level: number
+  bountiful_item: string
+  scarce_item: string
+  headline_basis: string
+}
+
+export async function getWorldEra(): Promise<WorldEra | null> {
+  try {
+    const raw = await readContract<string>(ADDRESSES.PLAYER_REGISTRY, 'get_world_era', [])
+    return raw ? (JSON.parse(raw) as WorldEra) : null
+  } catch { return null }
+}
+
+/**
+ * Writes this epoch's shared world from real headlines. Permissionless and
+ * idempotent per epoch: the first caller pays, everyone lives under the result.
+ */
+export async function refreshWorld(client: GenLayerClient): Promise<WorldEra> {
+  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'refresh_world', [])
+  return JSON.parse(String(raw)) as WorldEra
+}
+
+export interface FreeformResult {
+  success: boolean
+  deduct: Record<string, number>
+  grant: Record<string, number>
+  verdict: string
+  inventory: Record<string, number>
+  xp: number
+  score: number
+}
+
+/** Combine anything; the contract's LLM rules on what it makes. */
+export async function craftFreeform(
+  client: GenLayerClient,
+  inputs: Record<string, number>,
+  intent: string,
+): Promise<FreeformResult> {
+  const raw = await writeContract(
+    client,
+    ADDRESSES.PLAYER_REGISTRY,
+    'craft_freeform',
+    [JSON.stringify(inputs), intent],
+  )
+  return JSON.parse(String(raw)) as FreeformResult
+}
+
+export interface HouseMeta {
+  token_id: number
+  owner: string
+  name: string
+  description?: string
+  structure_type?: string
+  quality: number
+  verdict?: string
+  damaged: boolean
+}
+
+export async function getHouse(tokenId: number): Promise<HouseMeta | null> {
+  try {
+    const raw = await readContract<string>(ADDRESSES.PLAYER_REGISTRY, 'get_house', [tokenId])
+    return raw ? (JSON.parse(raw) as HouseMeta) : null
+  } catch { return null }
 }
 
 export async function getHousesOf(address: string): Promise<number[]> {

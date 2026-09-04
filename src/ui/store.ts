@@ -51,6 +51,16 @@ export interface AIEventResult {
   reasoning: string
 }
 
+export interface WorldEra {
+  epoch: number
+  era_name: string
+  description: string
+  danger_level: number
+  bountiful_item: string
+  scarce_item: string
+  headline_basis: string
+}
+
 export interface LeaderboardEntry {
   address: string
   score: number
@@ -142,6 +152,9 @@ interface GameStore {
   setEpochInfo: (info: EpochInfo) => void
   lastAIEvent: AIEventResult | null
   setLastAIEvent: (r: AIEventResult) => void
+  /** The shared, AI-authored world era. Global, identical for every player. */
+  worldEra: WorldEra | null
+  setWorldEra: (e: WorldEra) => void
   txPending: boolean
   txStatus: string
   setTxStatus: (pending: boolean, status?: string) => void
@@ -208,6 +221,8 @@ export const useGameStore = create<GameStore>((set) => ({
   setEpochInfo: (epochInfo) => set({ epochInfo }),
   lastAIEvent: null,
   setLastAIEvent: (lastAIEvent) => set({ lastAIEvent }),
+  worldEra: null,
+  setWorldEra: (worldEra) => set({ worldEra }),
   txPending: false,
   txStatus: '',
   setTxStatus: (txPending, txStatus = '') => set({ txPending, txStatus }),
