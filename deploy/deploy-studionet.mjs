@@ -114,8 +114,22 @@ for (const name of targets) {
     process.exit(1);
   }
 
+
+  const leader = receipt?.consensus_data?.leader_receipt?.[0] ?? receipt?.consensus_data?.leader_receipt;
+  const execResult = leader?.execution_result;
+  if (execResult !== "SUCCESS") {
+    // FINALIZED only means consensus accepted the transaction. A contract whose
+    // constructor fails still finalizes, still reports an address, and simply
+    // does not exist when you call it — so this must be checked explicitly.
+    console.error(`
+${label} FAILED: execution_result=${execResult}`);
+    console.error(`  Nothing is deployed at ${address}.`);
+    console.error(`  GenVM: ${JSON.stringify(leader?.genvm_result ?? null)}`);
+    process.exit(1);
+  }
+
   deployed[key] = address;
-  console.log(`${label}: ${address}`);
+  console.log(`${label}: ${address} (execution SUCCESS)`);
 }
 
 // ── 4. Patch src/chain/addresses.ts ──────────────────────────────────────────
