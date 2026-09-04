@@ -91,6 +91,11 @@ MAX_GATHERS_PER_DAY = 600
 
 # Trees are placed by a per-coordinate hash so the contract can verify one
 # exists. src/game/world/WorldGenerator.ts uses the identical rule.
+# The leaderboard is kept as a maintained top-N rather than rebuilt by scanning
+# every registered player on read - that scan grew without bound and would
+# eventually stop returning.
+LEADERBOARD_SIZE    = 100
+
 TREE_HASH_SALT      = 53
 TREE_HASH_THRESHOLD = 850    # 8.5 % of coordinates carry a tree
 
@@ -119,6 +124,9 @@ class GenSurvivalGame(gl.Contract):
 
     # Anti-cheat gather log - addr_hex -> "last_ts:last_x:last_y:window_start:count"
     gather_log: TreeMap[str, str]
+
+    # Maintained top-N ranking - key "data" -> JSON array, score-descending
+    leaderboard_top: TreeMap[str, str]
 
     def __init__(self) -> None:
         self.next_house_id = u256(1)
@@ -235,6 +243,7 @@ class GenSurvivalGame(gl.Contract):
         state["score"]      = self._score(state)
         state["updated_at"] = self._now()
         self.player_states[addr_hex] = json.dumps(state, sort_keys=True)
+        self._update_leaderboard(addr_hex, state.get("name", ""), int(state["score"]))
 
         profile = json.loads(self.players[addr_hex])
         profile["name"]        = state.get("name", profile.get("name", ""))
@@ -244,6 +253,36 @@ class GenSurvivalGame(gl.Contract):
         if "registered_at" not in profile:
             profile["registered_at"] = int(self.registered_at[addr_hex])
         self.players[addr_hex] = json.dumps(profile, sort_keys=True)
+
+    def _update_leaderboard(self, addr_hex: str, name: str, score: int) -> None:
+        """Keep a score-ordered top-N so get_leaderboard is O(1) in player count.
+
+        Writing is skipped entirely for players who are neither ranked nor good
+        enough to displace the last ranked entry, so the common case costs
+        nothing. One caveat: a ranked player whose score *falls* keeps their
+        slot until someone outside the list next acts and displaces them, since
+        promoting the right replacement would need the full scan this exists to
+        avoid. The ranking self-corrects as play continues.
+        """
+        raw = self.leaderboard_top["data"] if "data" in self.leaderboard_top else "[]"
+        entries = json.loads(raw)
+
+        kept = []
+        was_ranked = False
+        for e in entries:
+            if e["address"] == addr_hex:
+                was_ranked = True
+            else:
+                kept.append(e)
+
+        if (not was_ranked
+                and len(kept) >= LEADERBOARD_SIZE
+                and int(score) <= int(kept[-1]["score"])):
+            return
+
+        kept.append({"address": addr_hex, "name": name, "score": int(score)})
+        kept.sort(key=lambda e: -int(e["score"]))
+        self.leaderboard_top["data"] = json.dumps(kept[:LEADERBOARD_SIZE], sort_keys=True)
 
     def _apply_inventory_delta(self, state: dict, delta: dict) -> None:
         inventory = state.get("inventory", {})
@@ -343,6 +382,7 @@ class GenSurvivalGame(gl.Contract):
         self.player_states[addr_hex] = json.dumps(state, sort_keys=True)
         self.registered_at[addr_hex] = timestamp
         self.player_addresses.append(addr_hex)
+        self._update_leaderboard(addr_hex, player_name, 0)
 
     @gl.public.write
     def update_profile(self, profile_json: str) -> None:
@@ -708,9 +748,18 @@ class GenSurvivalGame(gl.Contract):
         return str(self.registered_at[address]) if address in self.registered_at else "0"
 
     @gl.public.view
-    def get_all_players_json(self) -> str:
+    def get_player_count(self) -> int:
+        return len(self.player_addresses)
+
+    @gl.public.view
+    def get_all_players_json(self, offset: int, limit: int) -> str:
+        """Registered players [offset, offset + limit). Page with get_player_count()."""
+        assert 1 <= int(limit) <= 200, "Limit must be 1-200"
+        total = len(self.player_addresses)
+        end = min(total, int(offset) + int(limit))
         result = []
-        for addr_hex in self.player_addresses:
+        for i in range(int(offset), end):
+            addr_hex = self.player_addresses[i]
             result.append({
                 "address":      addr_hex,
                 "profile":      self.players[addr_hex] if addr_hex in self.players else "",
@@ -720,13 +769,12 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.view
     def get_leaderboard(self) -> str:
-        entries = []
-        for addr_hex in self.player_addresses:
-            state = json.loads(self.player_states[addr_hex]) if addr_hex in self.player_states else self._default_state(addr_hex, "")
-            entries.append({
-                "address": addr_hex,
-                "score":   int(state["score"]) if "score" in state else self._score(state),
-                "name":    state.get("name", ""),
-            })
-        entries.sort(key=lambda e: e["score"], reverse=True)
-        return json.dumps(entries[:100], sort_keys=True)
+        """The maintained top-N, already score-ordered.
+
+        Reads one storage entry instead of loading and sorting every player, so
+        the cost no longer grows with the player count. It also no longer calls
+        _default_state, which reads gl.message_raw["datetime"] - unavailable in
+        some view contexts and a latent failure for any player with a profile
+        but no saved state.
+        """
+        return self.leaderboard_top["data"] if "data" in self.leaderboard_top else "[]"
