@@ -104,7 +104,31 @@ export function useWallet() {
         return
       }
 
-      // Same account still unlocked → restore session immediately, no sign required.
+      // A saved session is not proof of anything on-chain. Redeploying the
+      // contract wipes every registration, and restoring blindly used to drop
+      // the player straight into the world against a contract that had never
+      // heard of them - terrain rendered, then every mine, chop and craft
+      // reverted with "Not registered" and nothing explained why.
+      const registered = await isRegistered(session.address)
+
+      if (registered === null) {
+        // Network unreachable: we cannot tell "not registered" from "cannot
+        // ask". Keep the session for the next reload and let the player use
+        // the connect button, which surfaces the failure properly.
+        return
+      }
+
+      if (!registered) {
+        // Drop to idle rather than jumping to 'needs-name': WalletGate only
+        // renders on the game screen, so a name prompt raised from here would
+        // never appear. Clearing the session puts the honest "connect" button
+        // back, and connect() runs the registration flow properly.
+        clearSession()
+        toast.info('This world has been reset — reconnect to register again.')
+        return
+      }
+
+      // Same account, still registered → restore immediately, no sign required.
       setWallet(session.address, session.name, true, session.seed)
       setWalletPhase('ready')
     } catch {
