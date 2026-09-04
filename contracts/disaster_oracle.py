@@ -1,4 +1,13 @@
-# { "Depends": "py-genlayer:test" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
+
+# Two things about the two lines above, both of which cost a day of failed
+# deploys:
+#   * The version is pinned. "py-genlayer:test" is a floating tag and is
+#     currently broken on studionet - a contract that deploys fine with this
+#     hash fails with nothing but an empty GenVM error when using it.
+#   * The blank line is required. GenVM reads the run of comment lines
+#     directly beneath the Depends header as further header directives, so
+#     prose there fails the deploy the same silent way.
 
 from genlayer import *
 from datetime import datetime, timezone

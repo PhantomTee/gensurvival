@@ -3,6 +3,6 @@
  * Updated after redeployment with new ABIs (mine_tile terrain_type param, etc.)
  */
 export const ADDRESSES = {
-  PLAYER_REGISTRY: '0xcB737d11e9d15B86c373f15fB3154c11e4Bb992d',
-  DISASTER_ORACLE: '0x34E3A9ce1Eaf09231Bb79eb1a982438BA6e882e4',
+  PLAYER_REGISTRY: '0x3f3E407b6425C2AfCD45506f6bA522398f8313B4',
+  DISASTER_ORACLE: '0x2a695fdE24b52e65e3062E7Bc272D41d8Ef2AeFC',
 } as const
