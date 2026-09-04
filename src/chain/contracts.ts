@@ -179,39 +179,6 @@ export async function mintHouse(
   return Number(tokenId)
 }
 
-/** What apply_inventory_delta actually returns - it has no deduct/grant. */
-export interface AppliedInventoryDelta {
-  applied_delta: Record<string, number>
-  inventory: Record<string, number>
-  xp: number
-  score: number
-}
-
-export async function applyInventoryDeltaOnChain(
-  client: GenLayerClient,
-  eventId: string,
-  delta: Record<string, number>,
-  xpDelta: number,
-): Promise<AppliedInventoryDelta> {
-  const raw = await writeContract(
-    client,
-    ADDRESSES.PLAYER_REGISTRY,
-    'apply_inventory_delta',
-    [eventId, JSON.stringify(delta), xpDelta],
-  ) as string
-  return JSON.parse(raw) as AppliedInventoryDelta
-}
-
-export async function applyHouseEvent(
-  client: GenLayerClient,
-  tokenId: number,
-  damaged: boolean,
-  qualityDelta: number,
-  eventId: string,
-): Promise<void> {
-  await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'apply_house_event', [tokenId, damaged, qualityDelta, eventId])
-}
-
 export async function getHousesOf(address: string): Promise<number[]> {
   try {
     const raw = await readContract<string>(ADDRESSES.PLAYER_REGISTRY, 'get_houses_of', [address])
@@ -229,7 +196,7 @@ export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
 
 export async function getCallCountToday(address: string): Promise<number> {
   try {
-    return await readContract<number>(ADDRESSES.DISASTER_ORACLE, 'get_call_count_today', [address])
+    return await readContract<number>(ADDRESSES.PLAYER_REGISTRY, 'get_call_count_today', [address])
   } catch { return 0 }
 }
 
@@ -237,15 +204,19 @@ export async function recordSurvivalDay(client: GenLayerClient, dayNumber: numbe
   await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'record_survival_day', [dayNumber])
 }
 
-export async function submitPlayerStats(
-  client: GenLayerClient,
-  statsJson: string,
-): Promise<string> {
+/**
+ * Generates and applies this epoch's AI world event in a single transaction.
+ *
+ * Takes no arguments on purpose: the contract reads the player's inventory, xp
+ * and houses from its own storage. The old call passed a client-authored stats
+ * blob, so a player could declare whatever state suited them.
+ */
+export async function triggerWorldEvent(client: GenLayerClient): Promise<string> {
   const result = await writeContract(
     client,
-    ADDRESSES.DISASTER_ORACLE,
-    'submit_player_stats',
-    [statsJson],
+    ADDRESSES.PLAYER_REGISTRY,
+    'trigger_world_event',
+    [],
   )
   return String(result)
 }

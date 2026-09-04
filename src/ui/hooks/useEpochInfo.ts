@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react'
 import { useGameStore } from '../store'
 import { getCallCountToday } from '../../chain/contracts'
 
-// Mirror the constants in disaster_oracle.py — must stay in sync if contract changes.
+// Mirror EPOCH_DURATION and CALL_WINDOW in contracts/player_registry.py.
+// If these drift, the UI says the window is closed while the contract accepts
+// calls, or the reverse.
 const EPOCH_DURATION = 6 * 3600   // 6 hours in seconds
-const CALL_WINDOW    = 1 * 3600   // 1 hour in seconds
+const CALL_WINDOW    = 3 * 3600   // 3 hours in seconds
 
 /**
  * Epoch info is pure deterministic math — no contract call needed.

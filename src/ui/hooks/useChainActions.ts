@@ -16,16 +16,13 @@ import { useCallback, useMemo } from 'react'
 import { useGameStore } from '../store'
 import { createWriteClient } from '../../chain/client'
 import {
-  applyHouseEvent,
-  applyInventoryDeltaOnChain,
   chopTree,
   craftItem,
   fishTile,
-  getPlayerState,
   mineTile,
   mintHouse,
   placeBuildTile,
-  submitPlayerStats,
+  triggerWorldEvent,
   updateProfile,
   type ActionDelta,
 } from '../../chain/contracts'
@@ -183,107 +180,59 @@ export function useChainActions() {
   }, [])
 
   // ── doSubmitEvent ────────────────────────────────────────────────────────
+  // One transaction now. This used to be four: read state, ask the oracle,
+  // apply the inventory delta, maybe apply a house event, then update the
+  // profile — with the oracle's rewards discarded in the middle because the
+  // registry could not trust them. The contract does the whole thing.
   const doSubmitEvent = useCallback(async () => {
     const store = useGameStore.getState()
-    if (!store.walletAddress) { toast.error('Connect your wallet to submit stats to the AI oracle.'); return }
-    if (!store.playerStats) return
+    if (!store.walletAddress) { toast.error('Connect your wallet to trigger a world event.'); return }
 
-    store.setTxStatus(true, 'Reading canonical state...')
+    store.setTxStatus(true, 'Reading the news and consulting the world AI (~30s)...')
     try {
-      const client    = createWriteClient(store.walletAddress)
-      const canonical = await getPlayerState(store.walletAddress)
-      const stats     = useGameStore.getState().playerStats!
-      const chainInventory = canonical?.inventory ?? {}
-
-      const statsPayload = {
-        health:             stats.health,
-        max_health:         stats.maxHealth,
-        energy:             stats.energy,
-        max_energy:         stats.maxEnergy,
-        xp:                 canonical?.xp ?? stats.xp,
-        inventory:          chainInventory,
-        house_token_ids:    useGameStore.getState().houses.map(h => h.tokenId),
-        days_survived:      canonical?.days_survived ?? stats.dayNumber,
-        zombies_killed:     0,
-        resources_gathered: Object.values(chainInventory).reduce((a, b) => a + b, 0),
-      }
-
-      useGameStore.getState().setTxStatus(true, 'Waiting for AI consensus (~30s)...')
-      const resultJson = await submitPlayerStats(client, JSON.stringify(statsPayload))
+      const client     = createWriteClient(store.walletAddress)
+      const resultJson = await triggerWorldEvent(client)
       const result     = JSON.parse(resultJson)
 
+      // Everything here is what the contract actually applied, not a proposal.
       const delta = {
-        eventType:        result.event_type,
-        eventName:        result.event_name,
-        description:      result.description,
-        healthDelta:      result.health_delta,
-        energyDelta:      result.energy_delta,
-        xpDelta:          result.xp_delta,
-        inventoryDelta:   result.inventory_delta ?? {},
-        houseDamaged:     result.house_damaged,
-        houseDamageAmount: result.house_damage_amount,
-        houseQualityDelta: result.house_quality_delta,
-        reasoning:        result.reasoning,
+        eventType:         result.event_type,
+        eventName:         result.event_name,
+        description:       result.description,
+        healthDelta:       result.health_delta ?? 0,
+        energyDelta:       result.energy_delta ?? 0,
+        xpDelta:           result.xp_delta ?? 0,
+        inventoryDelta:    result.inventory_delta ?? {},
+        houseDamaged:      Boolean(result.house_damaged),
+        houseDamageAmount: 0,
+        houseQualityDelta: result.house_quality_delta ?? 0,
+        reasoning:         result.reasoning ?? '',
       }
-
-      useGameStore.getState().setTxStatus(true, 'Applying AI effect on-chain...')
-      const applied = await applyInventoryDeltaOnChain(
-        client,
-        `${useGameStore.getState().epochInfo?.currentEpoch ?? 0}-${result.event_name}`,
-        delta.inventoryDelta,
-        delta.xpDelta,
-      )
-
-      // The chain is the only authority on inventory. apply_inventory_delta
-      // persists losses and drops gains, so mirror exactly what it applied -
-      // showing the oracle's ungranted gains locally used to leave the player
-      // with items that every later craft transaction would reject.
-      delta.inventoryDelta = applied.applied_delta ?? {}
-
-      const currentStore = useGameStore.getState()
-      if (delta.houseDamaged && currentStore.houses.length > 0) {
-        // Damage the player's most valuable undamaged house rather than
-        // always houses[0], which left every house after the first untouchable.
-        const target =
-          [...currentStore.houses]
-            .sort((a, b) => Number(a.damaged) - Number(b.damaged) || b.quality - a.quality)[0]
-        await applyHouseEvent(
-          client,
-          target.tokenId,
-          true,
-          delta.houseQualityDelta,
-          `${currentStore.epochInfo?.currentEpoch ?? 0}-${result.event_name}`,
-        )
-      }
-
-      await updateProfile(client, JSON.stringify({
-        name:        useGameStore.getState().playerName,
-        house_count: useGameStore.getState().houses.length,
-      }))
 
       window.dispatchEvent(new CustomEvent('gensurvival:aiEvent', { detail: delta }))
-      const finalStore = useGameStore.getState()
-      finalStore.setLastAIEvent(delta)
-      finalStore.setTxStatus(false, '')
-      toast.info(`AI Event: ${result.event_name}`)
 
-      const latest = await getPlayerState(store.walletAddress)
-      const epoch  = useGameStore.getState().epochInfo?.currentEpoch ?? 0
-      Promise.all([
-        upsertPlayer({
-          address:      store.walletAddress,
-          name:         useGameStore.getState().playerName,
-          score:        latest?.score ?? 0,
-          house_count:  latest?.house_count ?? useGameStore.getState().houses.length,
-          days_survived: latest?.days_survived ?? stats.dayNumber,
-          xp:           latest?.xp ?? stats.xp,
-        }),
-        logAIEvent(store.walletAddress, epoch, result.event_type, result),
-      ]).catch(() => { /* best-effort */ })
+      const s = useGameStore.getState()
+      s.setLastAIEvent(delta)
+      if (result.house_damaged && typeof result.damaged_house_id === 'number') {
+        s.setHouses(s.houses.map(h =>
+          h.tokenId === result.damaged_house_id ? { ...h, damaged: true } : h))
+      }
+      s.setTxStatus(false, '')
+      toast.info(`${result.event_type === 'good' ? 'Fortune' : 'Event'}: ${result.event_name}`)
+
+      logAIEvent(store.walletAddress, result.epoch ?? 0, result.event_type, result).catch(() => {})
+      upsertPlayer({
+        address:       store.walletAddress,
+        name:          s.playerName,
+        score:         result.score ?? 0,
+        house_count:   s.houses.length,
+        days_survived: s.playerStats?.dayNumber ?? 0,
+        xp:            result.xp ?? 0,
+      }).catch(() => { /* best-effort */ })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       useGameStore.getState().setTxStatus(false, '')
-      toast.error(`Submission failed: ${msg}`)
+      toast.error(`World event failed: ${msg}`)
     }
   }, [])
 

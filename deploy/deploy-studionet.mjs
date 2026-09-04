@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 /**
- * Deploy both GenSurvival contracts to GenLayer studionet and patch
- * src/chain/addresses.ts with the new addresses.
+ * Deploy the GenSurvival contract to GenLayer studionet and patch
+ * src/chain/addresses.ts with the new address.
  *
  * Usage (from repo root):
- *   node deploy/deploy-studionet.mjs                # both contracts
- *   node deploy/deploy-studionet.mjs registry       # just player_registry.py
- *   node deploy/deploy-studionet.mjs oracle         # just disaster_oracle.py
+ *   node deploy/deploy-studionet.mjs                # deploys player_registry.py
  *
  * Deploying resets all player state: registrations, inventories, houses and
  * the leaderboard all start empty at the new addresses.
@@ -28,16 +26,13 @@ const { TransactionStatus } = req("genlayer-js/types");
 
 const RPC = "https://studio.genlayer.com/api";
 
+// DisasterOracle was folded into GenSurvivalGame - see the comment above
+// trigger_world_event in contracts/player_registry.py for why.
 const CONTRACTS = {
   registry: {
     source: "contracts/player_registry.py",
     key: "PLAYER_REGISTRY",
     label: "GenSurvivalGame",
-  },
-  oracle: {
-    source: "contracts/disaster_oracle.py",
-    key: "DISASTER_ORACLE",
-    label: "DisasterOracle",
   },
 };
 

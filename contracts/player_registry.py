@@ -20,6 +20,7 @@
 from genlayer import *
 from datetime import datetime, timezone
 import json
+import re
 
 
 # ── Recipes ───────────────────────────────────────────────────────────────────
@@ -99,6 +100,32 @@ MIN_GATHER_INTERVAL = 2      # seconds between two gather actions
 MAX_GATHER_STEP     = 48     # tiles between consecutive gather coordinates
 MAX_GATHERS_PER_DAY = 600
 
+# ── AI world events ──────────────────────────────────────────────────────────
+# Live RSS feeds, verified reachable. Reuters retired its public RSS and
+# apnews.com/rss now 404s, so both were replaced.
+NEWS_SOURCES = [
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://www.theguardian.com/world/rss",
+    "https://feeds.npr.org/1004/rss.xml",
+]
+
+EPOCH_DURATION    = 6 * 3600
+CALL_WINDOW       = 3 * 3600   # half of each epoch, so the feature is reachable
+MAX_CALLS_PER_DAY = 4
+
+# Bounds on what one event may hand out. The contract trusts its own LLM output
+# because it produced it, but "produced it" is not "is sane" - a hallucinated
+# {"WOOD_LOG": 999999999} would otherwise mint itself straight into inventory.
+# Grants are also restricted to a known item list so the model cannot invent
+# items that no recipe, icon or drop table knows about.
+EVENT_GRANTABLE_ITEMS = [
+    "WOOD_LOG", "WOOD_PLANK", "WOOD_STICK", "STONE", "COAL",
+    "IRON_ORE", "FISH", "RAW_MEAT", "WHEAT", "BREAD",
+]
+MAX_EVENT_ITEM_GRANT = 8
+MAX_EVENT_ITEM_TYPES = 4
+MAX_EVENT_XP_DELTA   = 40
+
 # Trees are placed by a per-coordinate hash so the contract can verify one
 # exists. src/game/world/WorldGenerator.ts uses the identical rule.
 # The leaderboard is kept as a maintained top-N rather than rebuilt by scanning
@@ -128,9 +155,11 @@ class GenSurvivalGame(gl.Contract):
     owner_houses: TreeMap[str, str]      # addr_hex -> JSON array of token_ids
     next_house_id: u256
 
-    # AI event replay protection
-    # Keys: "addr:event_id:inventory"  or  "addr:event_id:house"
-    used_ai_events: TreeMap[str, bool]
+    # World events: rate-limit log and the last event applied, per player.
+    # No replay-protection map is needed any more - an event is generated and
+    # applied inside one transaction, so there is no window to replay it in.
+    call_log:   TreeMap[str, str]   # addr_hex -> JSON array of unix timestamps
+    last_event: TreeMap[str, str]   # addr_hex -> last applied event JSON
 
     # Anti-cheat gather log - addr_hex -> "last_ts:last_x:last_y:window_start:count"
     gather_log: TreeMap[str, str]
@@ -151,6 +180,50 @@ class GenSurvivalGame(gl.Contract):
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return int(parsed.timestamp())
+
+    def _epoch(self, ts: int) -> int:
+        return ts // EPOCH_DURATION
+
+    def _in_window(self, ts: int) -> bool:
+        return (ts - self._epoch(ts) * EPOCH_DURATION) < CALL_WINDOW
+
+    def _calls_in_day(self, addr_hex: str, now: int) -> int:
+        if addr_hex not in self.call_log:
+            return 0
+        cutoff = now - DAY_SECONDS
+        count = 0
+        for timestamp in json.loads(self.call_log[addr_hex]):
+            if timestamp > cutoff:
+                count += 1
+        return count
+
+    def _record_call(self, addr_hex: str, now: int) -> None:
+        calls = json.loads(self.call_log[addr_hex]) if addr_hex in self.call_log else []
+        cutoff = now - DAY_SECONDS
+        kept = [t for t in calls if t > cutoff]
+        kept.append(now)
+        self.call_log[addr_hex] = json.dumps(kept, sort_keys=True)
+
+    def _pick_event_house(self, addr_hex: str) -> int:
+        """Choose which house an event damages, on-chain.
+
+        The client used to pass houses[0], so every house after the first was
+        permanently immune. Prefer the best undamaged house, else the first.
+        """
+        owned = json.loads(self.owner_houses[addr_hex]) if addr_hex in self.owner_houses else []
+        if len(owned) == 0:
+            return -1
+        best_id = -1
+        best_quality = -1
+        for house_id in owned:
+            meta = json.loads(self.houses[u256(int(house_id))])
+            if meta.get("damaged", False):
+                continue
+            quality = int(meta.get("quality", 1))
+            if quality > best_quality:
+                best_quality = quality
+                best_id = int(house_id)
+        return best_id if best_id >= 0 else int(owned[0])
 
     def _coord_key(self, addr_hex: str, x: int, y: int) -> str:
         return addr_hex + ":" + str(x) + ":" + str(y)
@@ -630,96 +703,226 @@ class GenSurvivalGame(gl.Contract):
 
         return house_id
 
-    # ── AI event application (disaster effects only) ──────────────────────────
+    # ── AI world events ───────────────────────────────────────────────────────
     #
-    # SAFETY MODEL
-    # ─────────────
-    # apply_inventory_delta  — player-callable; only applies losses (negative
-    #   deltas). Positive rewards are silently ignored. XP can only decrease,
-    #   never go below 0. Each event_id may be used exactly once per player.
-    #
-    # apply_house_event — player-callable; only applies negative disaster
-    #   effects. quality_delta is clamped to ≤ 0 (houses cannot be improved
-    #   through this path). damaged can only be set to True, never cleared.
-    #   Each event_id may be used exactly once per house.
-    #
-    # Positive rewards (inventory grants, house repair, XP bonuses) must come
-    # through an oracle-authenticated route — not yet implemented but reserved.
+    # The LLM call and the state change happen in one transaction, which is the
+    # entire reason this lives here rather than in a separate oracle contract.
+    # An oracle can only recommend; a registry receiving a recommendation cannot
+    # tell it apart from a player asking for free items. That is why the old
+    # split silently discarded every positive delta - "good" events existed in
+    # the UI and granted nothing. The contract now produces the event itself, so
+    # it can act on the result, bounded by the caps in EVENT_GRANTABLE_ITEMS,
+    # MAX_EVENT_ITEM_GRANT and MAX_EVENT_XP_DELTA.
 
     @gl.public.write
-    def apply_inventory_delta(self, event_id: str, delta_json: str, xp_delta: int) -> str:
+    def trigger_world_event(self) -> str:
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
-        assert len(event_id) > 0, "Event id cannot be empty"
+        now = self._now()
 
-        # ── Replay protection ────────────────────────────────────────────────
-        used_key = addr_hex + ":" + event_id + ":inventory"
-        assert used_key not in self.used_ai_events, "Event already applied to inventory"
+        assert self._in_window(now), "World events are closed right now - check back next epoch"
+        assert self._calls_in_day(addr_hex, now) < MAX_CALLS_PER_DAY, \
+            "Rate limit: " + str(MAX_CALLS_PER_DAY) + " world events per 24 hours"
 
-        incoming = json.loads(delta_json)
-        assert isinstance(incoming, dict), "Delta must be an object"
+        # ── Snapshot from storage, not from the caller ────────────────────────
+        # These used to arrive as a client-authored JSON blob, so a player could
+        # declare any inventory or house list they liked. Reading them here is
+        # what makes the event's inputs as trustworthy as its output.
+        #
+        # Everything the nondet closure touches must be a plain Python value:
+        # closing over storage objects across an equivalence-principle block is
+        # not allowed.
+        state = self._get_state(addr_hex)
+        inventory_snapshot = {}
+        for item, count in state.get("inventory", {}).items():
+            inventory_snapshot[str(item)] = int(count)
+        xp_snapshot    = int(state.get("xp", 0))
+        days_snapshot  = int(state.get("days_survived", 0))
+        owned_houses   = json.loads(self.owner_houses[addr_hex]) if addr_hex in self.owner_houses else []
+        house_count    = len(owned_houses)
+        epoch_num      = self._epoch(now)
 
-        state     = self._get_state(addr_hex)
+        stats_snapshot = json.dumps({
+            "xp":             xp_snapshot,
+            "days_survived":  days_snapshot,
+            "inventory":      inventory_snapshot,
+            "house_count":    house_count,
+            "epoch_number":   epoch_num,
+        }, sort_keys=True)
+
+        grantable = ", ".join(EVENT_GRANTABLE_ITEMS)
+
+        def fetch_event_context() -> str:
+            # Compact headlines only - smaller responses vary less between
+            # validators, which keeps the equivalence check stable.
+            news_texts = []
+            for url in NEWS_SOURCES:
+                try:
+                    response = gl.nondet.web.get(url)
+                    body = response.body.decode("utf-8", errors="replace")
+                    titles = re.findall(r"<title>(.*?)</title>", body, re.DOTALL)
+                    snippet = " | ".join(t.strip() for t in titles[1:8])
+                    news_texts.append(snippet[:500])
+                except Exception:
+                    news_texts.append("(unavailable)")
+
+            return json.dumps({
+                "current_real_world_news": " || ".join(news_texts),
+                "player_game_state": json.loads(stats_snapshot),
+            }, sort_keys=True)
+
+        task = """
+You are the game master for GenSurvival, a survival game.
+Read the real-world news headlines and the player's game state, then decide what
+happens in their world this epoch.
+
+Decision rules:
+1. News of disaster, conflict or crisis leans disaster.
+2. News of peace, science, cooperation or abundance leans good.
+3. Mixed or neutral news leans neutral with small effects.
+4. Players with low xp and few days survived get gentler negative events.
+5. House damage is only allowed if house_count is at least 1.
+6. Item removals must not exceed what the inventory actually shows.
+7. Item grants may only use these items: """ + grantable + """
+8. No single item grant may exceed """ + str(MAX_EVENT_ITEM_GRANT) + """, and at most """ + str(MAX_EVENT_ITEM_TYPES) + """ item types.
+9. xp_delta must be between -""" + str(MAX_EVENT_XP_DELTA) + """ and """ + str(MAX_EVENT_XP_DELTA) + """.
+
+Return only valid JSON. No markdown. No text outside the JSON.
+event_type must be exactly one of "disaster", "good", "neutral".
+Use exactly this shape:
+{
+  "event_type": "disaster",
+  "event_name": "string",
+  "description": "string",
+  "health_delta": 0,
+  "energy_delta": 0,
+  "xp_delta": 0,
+  "inventory_delta": {},
+  "house_damaged": false,
+  "house_quality_delta": 0,
+  "reasoning": "string"
+}
+health_delta and energy_delta are flavour applied in the client only, each
+between -2 and 2. They are deliberately not given to you as input.
+"""
+
+        criteria = """
+The answer must be valid JSON only, with no markdown.
+It must contain event_type, event_name, description, health_delta, energy_delta,
+xp_delta, inventory_delta, house_damaged, house_quality_delta and reasoning.
+health_delta and energy_delta must each be between -2 and 2.
+event_type must be exactly one of disaster, good or neutral.
+inventory_delta must be an object whose values are integers.
+Positive inventory_delta keys must come from this list: """ + grantable + """
+If house_count is 0 then house_damaged must be false and house_quality_delta 0.
+Negative inventory_delta values must be plausible given the inventory shown.
+The event must follow from the headlines and the player's state.
+"""
+
+        result_json = gl.eq_principle.prompt_non_comparative(
+            fetch_event_context,
+            task=task,
+            criteria=criteria,
+        )
+
+        # ── Everything below runs after the equivalence block returns ─────────
+        result_json = result_json.strip()
+        if result_json.startswith("```"):
+            result_json = result_json.replace("```json", "").replace("```", "").strip()
+
+        parsed = json.loads(result_json)
+        for field in ("event_type", "event_name", "description", "inventory_delta"):
+            assert field in parsed, "AI event missing " + field
+
+        event_type = str(parsed["event_type"])
+        assert event_type in ("disaster", "good", "neutral"), \
+            "Invalid event_type: must be disaster, good or neutral"
+
+        # ── Clamp, then apply ────────────────────────────────────────────────
+        state = self._get_state(addr_hex)
         inventory = state.get("inventory", {})
         safe_delta: dict = {}
+        granted_types = 0
 
-        for item, amount in incoming.items():
-            numeric = int(amount)
-            if numeric < 0:
-                # Clamp loss to what the player actually owns — never go negative
-                have = int(inventory.get(item, 0))
+        for item, delta in parsed["inventory_delta"].items():
+            item_id = str(item)
+            amount = int(delta)
+            if amount < 0:
+                have = int(inventory.get(item_id, 0))
                 if have > 0:
-                    safe_delta[item] = -min(have, abs(numeric))
-            # Positive amounts are silently ignored (oracle-only path, not yet live)
+                    safe_delta[item_id] = -min(have, abs(amount))
+            elif amount > 0:
+                if item_id not in EVENT_GRANTABLE_ITEMS:
+                    continue
+                if granted_types >= MAX_EVENT_ITEM_TYPES:
+                    continue
+                granted_types += 1
+                safe_delta[item_id] = min(amount, MAX_EVENT_ITEM_GRANT)
 
         self._apply_inventory_delta(state, safe_delta)
 
-        # XP: only losses, cannot go below 0
-        clamped_xp = min(int(xp_delta), 0)
-        state["xp"] = max(0, int(state.get("xp", 0)) + clamped_xp)
+        xp_delta = int(parsed.get("xp_delta", 0))
+        xp_delta = max(-MAX_EVENT_XP_DELTA, min(MAX_EVENT_XP_DELTA, xp_delta))
+        state["xp"] = max(0, int(state.get("xp", 0)) + xp_delta)
+
+        # ── House damage, targeted on-chain ──────────────────────────────────
+        damaged_house = -1
+        house_damaged = bool(parsed.get("house_damaged", False)) and house_count > 0
+        if house_damaged:
+            damaged_house = self._pick_event_house(addr_hex)
+            if damaged_house >= 0:
+                hid = u256(damaged_house)
+                meta = json.loads(self.houses[hid])
+                quality_delta = min(int(parsed.get("house_quality_delta", 0)), 0)
+                meta["quality"]    = max(1, min(5, int(meta.get("quality", 1)) + quality_delta))
+                meta["damaged"]    = True
+                meta["updated_at"] = now
+                self.houses[hid]   = json.dumps(meta, sort_keys=True)
+            else:
+                house_damaged = False
 
         self._save_state(addr_hex, state)
-        self.used_ai_events[used_key] = True
+        self._record_call(addr_hex, now)
 
+        # Clamped for the client's benefit; the chain stores neither.
+        parsed["health_delta"] = max(-2, min(2, int(parsed.get("health_delta", 0))))
+        parsed["energy_delta"] = max(-2, min(2, int(parsed.get("energy_delta", 0))))
+
+        parsed["inventory_delta"] = safe_delta
+        parsed["xp_delta"]        = xp_delta
+        parsed["house_damaged"]   = house_damaged
+        parsed["damaged_house_id"] = damaged_house
+        parsed["inventory"]       = state["inventory"]
+        parsed["xp"]              = state["xp"]
+        parsed["score"]           = state["score"]
+        parsed["epoch"]           = epoch_num
+
+        self.last_event[addr_hex] = json.dumps(parsed, sort_keys=True)
+        return self.last_event[addr_hex]
+
+    @gl.public.view
+    def get_last_event(self, address: str) -> str:
+        return self.last_event[address] if address in self.last_event else ""
+
+    @gl.public.view
+    def get_call_count_today(self, address: str) -> int:
+        return self._calls_in_day(address, self._now())
+
+    @gl.public.view
+    def get_epoch_info(self) -> str:
+        now = self._now()
+        epoch = self._epoch(now)
+        epoch_start = epoch * EPOCH_DURATION
+        next_start = (epoch + 1) * EPOCH_DURATION
+        in_window = self._in_window(now)
         return json.dumps({
-            "applied_delta": safe_delta,
-            "inventory":     state["inventory"],
-            "xp":            state["xp"],
-            "score":         state["score"],
+            "current_epoch":             epoch,
+            "epoch_start":               epoch_start,
+            "window_end":                epoch_start + CALL_WINDOW,
+            "next_epoch_start":          next_start,
+            "in_window":                 in_window,
+            "seconds_until_next_window": 0 if in_window else next_start - now,
         }, sort_keys=True)
-
-    @gl.public.write
-    def apply_house_event(self, house_id: int, damaged: bool, quality_delta: int, event_id: str) -> None:
-        addr_hex = gl.message.sender_address.as_hex
-        hid      = u256(int(house_id))
-        assert hid in self.houses, "House does not exist"
-        assert len(event_id) > 0, "Event id cannot be empty"
-
-        meta = json.loads(self.houses[hid])
-        # Case-insensitive owner check (GenLayer may return mixed-case addresses)
-        assert meta["owner"].lower() == addr_hex.lower(), "Only the house owner can update its state"
-
-        # ── Replay protection — keyed per house so the same event can affect
-        # each of the player's houses independently (once per house, not once total)
-        used_key = addr_hex + ":" + event_id + ":house:" + str(int(house_id))
-        assert used_key not in self.used_ai_events, "Event already applied to this house"
-
-        # ── Disaster-only constraints ────────────────────────────────────────
-        # quality_delta must be ≤ 0: houses can degrade but not improve via this path
-        clamped_delta = min(int(quality_delta), 0)
-        # damaged can only be set to True; once damaged it stays damaged until
-        # a future oracle-authenticated repair path (not yet implemented)
-        safe_damaged = meta.get("damaged", False) or bool(damaged)
-
-        quality = int(meta.get("quality", 1)) + clamped_delta
-        quality = max(1, min(5, quality))
-
-        meta["damaged"]       = safe_damaged
-        meta["quality"]       = quality
-        meta["last_event_id"] = event_id
-        meta["updated_at"]    = self._now()
-        self.houses[hid]      = json.dumps(meta, sort_keys=True)
-        self.used_ai_events[used_key] = True
 
     # ── Views ─────────────────────────────────────────────────────────────────
 

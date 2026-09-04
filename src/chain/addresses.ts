@@ -1,8 +1,11 @@
 /**
- * Deployed contract addresses on GenLayer Studionet.
- * Updated after redeployment with new ABIs (mine_tile terrain_type param, etc.)
+ * Deployed contract address on GenLayer Studionet.
+ *
+ * DisasterOracle was folded into GenSurvivalGame: an oracle could only
+ * recommend an event, and the registry receiving that recommendation had no way
+ * to tell it from a player asking for free items, so every positive reward was
+ * discarded. One contract generates and applies the event in one transaction.
  */
 export const ADDRESSES = {
-  PLAYER_REGISTRY: '0x3f3E407b6425C2AfCD45506f6bA522398f8313B4',
-  DISASTER_ORACLE: '0x2a695fdE24b52e65e3062E7Bc272D41d8Ef2AeFC',
+  PLAYER_REGISTRY: '0x5025426a0B9e9071ade0E7314b3B065460d5f6Fe',
 } as const
