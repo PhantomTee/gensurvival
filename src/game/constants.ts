@@ -27,7 +27,8 @@ export const NOISE_SAND = 0.21
 export const NOISE_GRASS = 0.78
 export const NOISE_ROCK = 0.85
 
-export const SPAWN_TREE = 12
+// Tree density lives in WorldGenerator.chainTreeAt, which must match the
+// contract's hash rule exactly - it is not tunable from here.
 export const SPAWN_FLOWER = 60
 export const SPAWN_CHICKEN = 200
 export const SPAWN_ZOMBIE = 400

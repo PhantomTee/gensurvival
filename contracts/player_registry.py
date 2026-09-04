@@ -71,6 +71,24 @@ HOUSE_MATERIAL_COST = {
     "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5,
 }
 
+# -- Anti-cheat: gathering limits ---------------------------------------------
+# The world is infinite and every one-shot key is namespaced by address, so
+# "one action per coordinate" cannot bound resource generation by itself - a
+# script just walks the coordinate space. These three limits do bound it:
+#   * a minimum interval between gathers (kills burst scripting),
+#   * a maximum jump between consecutive gather coordinates (a script that
+#     sweeps the map cannot teleport; a real player walks),
+#   * a rolling 24 h ceiling.
+DAY_SECONDS         = 24 * 3600
+MIN_GATHER_INTERVAL = 2      # seconds between two gather actions
+MAX_GATHER_STEP     = 48     # tiles between consecutive gather coordinates
+MAX_GATHERS_PER_DAY = 600
+
+# Trees are placed by a per-coordinate hash so the contract can verify one
+# exists. src/game/world/WorldGenerator.ts uses the identical rule.
+TREE_HASH_SALT      = 53
+TREE_HASH_THRESHOLD = 850    # 8.5 % of coordinates carry a tree
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 class GenSurvivalGame(gl.Contract):
@@ -94,6 +112,9 @@ class GenSurvivalGame(gl.Contract):
     # Keys: "addr:event_id:inventory"  or  "addr:event_id:house"
     used_ai_events: TreeMap[str, bool]
 
+    # Anti-cheat gather log - addr_hex -> "last_ts:last_x:last_y:window_start:count"
+    gather_log: TreeMap[str, str]
+
     def __init__(self) -> None:
         self.next_house_id = u256(1)
 
@@ -112,13 +133,22 @@ class GenSurvivalGame(gl.Contract):
         return addr_hex + ":" + str(x) + ":" + str(y)
 
     def _hash(self, seed: int, x: int, y: int, salt: int) -> int:
-        v = seed + x * 374761393 + y * 668265263 + salt * 1442695041
-        if v < 0:
-            v = -v
-        v = (v ^ (v // 1274126177)) * 1274126177
-        if v < 0:
-            v = -v
-        return v % 10000
+        """32-bit avalanche mix, bit-identical to chainHash() in the client.
+
+        Every step is masked to 32 bits because JavaScript's bitwise operators
+        coerce to int32 and cannot be made to match Python's arbitrary-precision
+        integers. The previous version did not mask, so client and contract
+        disagreed on 99.9 % of coordinates - the contract was validating a
+        different world than the one the player could see.
+        """
+        mask = 0xFFFFFFFF
+        h = (seed + x * 374761393 + y * 668265263 + salt * 1442695041) & mask
+        h ^= h >> 15
+        h = (h * 2246822519) & mask
+        h ^= h >> 13
+        h = (h * 3266489917) & mask
+        h ^= h >> 16
+        return h % 10000
 
     def _terrain_at(self, seed: int, x: int, y: int) -> str:
         quarry = self._quarry_rock_at(seed, x, y)
@@ -142,8 +172,11 @@ class GenSurvivalGame(gl.Contract):
         return "GRASS"
 
     def _quarry_rock_at(self, seed: int, x: int, y: int) -> str:
+        # WORLD_SIZE / 2 + offset, matching the client's quarryRockTile().
         cx, cy = 256 + 40, 256 + 8
         dx, dy = x - cx, y - cy
+        # Scaled integer ellipse test - the client uses the identical form so
+        # the two never disagree on a boundary tile through float rounding.
         ridge_scaled = (dx * dx * 10000) // (38 * 38) + (dy * dy * 10000) // (24 * 24)
         chipped_edge = self._hash(seed, x, y, 71) > 1150
         if ridge_scaled > 10000 or not chipped_edge:
@@ -243,6 +276,47 @@ class GenSurvivalGame(gl.Contract):
     def _require_registered(self, addr_hex: str) -> None:
         assert addr_hex in self.players, "Not registered"
 
+    def _tree_exists_at(self, x: int, y: int) -> bool:
+        """Per-coordinate tree placement - mirrored exactly by the client."""
+        return self._hash(0, int(x), int(y), TREE_HASH_SALT) < TREE_HASH_THRESHOLD
+
+    def _assert_and_record_gather(self, addr_hex: str, x: int, y: int) -> None:
+        """Rate-, distance- and volume-limit resource gathering.
+
+        Without this, mine/chop/fish are unbounded: the coordinate space is
+        infinite and each one-shot key is per-player, so a script can farm
+        forever. See the constants block for the reasoning behind each limit.
+        """
+        now = self._now()
+
+        if addr_hex not in self.gather_log:
+            self.gather_log[addr_hex] = (
+                str(now) + ":" + str(int(x)) + ":" + str(int(y)) + ":" + str(now) + ":1"
+            )
+            return
+
+        parts        = self.gather_log[addr_hex].split(":")
+        last_ts      = int(parts[0])
+        last_x       = int(parts[1])
+        last_y       = int(parts[2])
+        window_start = int(parts[3])
+        count        = int(parts[4])
+
+        assert now - last_ts >= MIN_GATHER_INTERVAL, "Gathering too fast"
+
+        step = max(abs(int(x) - last_x), abs(int(y) - last_y))
+        assert step <= MAX_GATHER_STEP, "Gather coordinate too far from your last action"
+
+        if now - window_start >= DAY_SECONDS:
+            window_start = now
+            count = 0
+        assert count < MAX_GATHERS_PER_DAY, "Daily gathering limit reached"
+
+        self.gather_log[addr_hex] = (
+            str(now) + ":" + str(int(x)) + ":" + str(int(y)) + ":"
+            + str(window_start) + ":" + str(count + 1)
+        )
+
     # ── Registration ──────────────────────────────────────────────────────────
 
     @gl.public.write
@@ -294,6 +368,15 @@ class GenSurvivalGame(gl.Contract):
     def record_survival_day(self, day_number: int) -> str:
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
+
+        # A game day is one real 24 h cycle (see DAY_STAGES in the client), so
+        # the highest day a player can honestly be on is bounded by how long
+        # they have been registered. Without this, day_number is free score.
+        elapsed = self._now() - int(self.registered_at[addr_hex])
+        max_day = 1 + max(0, elapsed) // DAY_SECONDS
+        assert int(day_number) >= 1, "Day number must be at least 1"
+        assert int(day_number) <= max_day, "Day number ahead of real elapsed time"
+
         state = self._get_state(addr_hex)
         if int(day_number) > int(state.get("days_survived", 0)):
             state["days_survived"] = int(day_number)
@@ -304,16 +387,21 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def mine_tile(self, x: int, y: int, terrain_type: str) -> str:
-        # terrain_type is supplied by the client (the client's WorldGenerator is
-        # authoritative for tile layout since it uses simplex-noise which cannot
-        # be reproduced cheaply on-chain). We validate it's a known mineable type.
+        # The contract derives the terrain itself - terrain_type is kept in the
+        # signature only for ABI compatibility and must agree with what we
+        # compute. Rock/ore placement is identical here and in the client's
+        # chainRockTile().
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.mined_tiles, "Tile already mined"
-        assert terrain_type in MINEABLE_DROPS, "Tile is not mineable"
 
-        drop  = MINEABLE_DROPS[terrain_type]
+        actual = self._terrain_at(0, int(x), int(y))
+        assert actual in MINEABLE_DROPS, "No mineable tile at these coordinates"
+        assert terrain_type == actual, "Claimed terrain does not match the world"
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+
+        drop  = MINEABLE_DROPS[actual]
         state = self._get_state(addr_hex)
         grant = {drop: 1}
         self._grant_items(state, grant)
@@ -325,12 +413,15 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def chop_tree(self, x: int, y: int) -> str:
-        # Tree presence is validated client-side (simplex-noise world cannot be
-        # reproduced on-chain). The contract enforces one-chop-per-coordinate only.
+        # Tree placement is a per-coordinate hash, so the contract can verify a
+        # tree is really there. The client uses the same rule, restricted to
+        # walkable land - client trees are a subset of contract-valid ones.
         addr_hex = gl.message.sender_address.as_hex
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.chopped_trees, "Tree already chopped"
+        assert self._tree_exists_at(int(x), int(y)), "No tree at these coordinates"
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
 
         state = self._get_state(addr_hex)
         grant = {"WOOD_LOG": 3}
@@ -349,6 +440,7 @@ class GenSurvivalGame(gl.Contract):
         neighbors = [(int(x)-1, int(y)), (int(x)+1, int(y)), (int(x), int(y)-1), (int(x), int(y)+1)]
         near_water = any(self._terrain_at(0, nx, ny) == "WATER" for nx, ny in neighbors)
         assert near_water, "Must fish adjacent to water"
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
 
         # Deterministic drop from address entropy so the same spot gives variety per player
         h = self._hash(0, int(x) + ord(addr_hex[2]) * 7, int(y) + ord(addr_hex[3]) * 13, 99)

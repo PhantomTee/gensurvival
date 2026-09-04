@@ -18,6 +18,7 @@ import { ToastContainer }  from './ui/components/Toast'
 import { useGameStore }    from './ui/store'
 import { useChainActions } from './ui/hooks/useChainActions'
 import { getPlayerState, recordSurvivalDay } from './chain/contracts'
+import { pickRendererType } from './game/renderer'
 import { createWriteClient } from './chain/client'
 
 function App() {
@@ -43,7 +44,7 @@ function App() {
     if (gameRef.current || !canvasRef.current) return
 
     gameRef.current = new Phaser.Game({
-      type:            Phaser.AUTO,
+      type:            pickRendererType(),
       parent:          canvasRef.current,
       width:           window.innerWidth,
       height:          window.innerHeight,

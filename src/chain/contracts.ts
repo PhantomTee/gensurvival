@@ -179,19 +179,27 @@ export async function mintHouse(
   return Number(tokenId)
 }
 
+/** What apply_inventory_delta actually returns - it has no deduct/grant. */
+export interface AppliedInventoryDelta {
+  applied_delta: Record<string, number>
+  inventory: Record<string, number>
+  xp: number
+  score: number
+}
+
 export async function applyInventoryDeltaOnChain(
   client: GenLayerClient,
   eventId: string,
   delta: Record<string, number>,
   xpDelta: number,
-): Promise<ActionDelta> {
+): Promise<AppliedInventoryDelta> {
   const raw = await writeContract(
     client,
     ADDRESSES.PLAYER_REGISTRY,
     'apply_inventory_delta',
     [eventId, JSON.stringify(delta), xpDelta],
   ) as string
-  return JSON.parse(raw) as ActionDelta
+  return JSON.parse(raw) as AppliedInventoryDelta
 }
 
 export async function applyHouseEvent(

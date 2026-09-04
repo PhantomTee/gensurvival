@@ -1,9 +1,30 @@
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL      = 'https://xcaegihfnveszzexugpy.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhjYWVnaWhmbnZlc3p6ZXh1Z3B5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5NTA3MjgsImV4cCI6MjA5NDUyNjcyOH0.HNn8K6ie4uyksmYsy_pxmFMrF87qiYXwVIcY8GFX_B4'
+/**
+ * Supabase mirror of on-chain progress. Purely for analytics - the in-game
+ * leaderboard reads GenSurvivalGame.get_leaderboard() from the contract, not
+ * these tables.
+ *
+ * The anon key is public by design (it ships in every client bundle), so it is
+ * not a secret - but it IS a write credential for anyone who opens devtools.
+ * Row Level Security policies on the Supabase project are what make these
+ * tables trustworthy; without them the mirror accepts arbitrary rows. Reading
+ * config from the environment keeps the project swappable and rotatable.
+ */
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null
+
+if (!supabase && import.meta.env.DEV) {
+  console.warn(
+    '[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are unset - ' +
+      'analytics mirroring is disabled. Gameplay is unaffected.',
+  )
+}
 
 // ─── Players ──────────────────────────────────────────────────────────────────
 
@@ -17,6 +38,7 @@ export interface PlayerRow {
 }
 
 export async function upsertPlayer(p: PlayerRow): Promise<void> {
+  if (!supabase) return
   await supabase.from('players').upsert({
     address:       p.address.toLowerCase(),
     name:          p.name,
@@ -37,6 +59,7 @@ export async function upsertHouse(
   damaged: boolean,
   quality: number,
 ): Promise<void> {
+  if (!supabase) return
   await supabase.from('houses').upsert({
     token_id:      tokenId,
     owner_address: ownerAddress.toLowerCase(),
@@ -60,6 +83,7 @@ export async function logCraft(
   deduct: Record<string, number>,
   grant: Record<string, number>,
 ): Promise<void> {
+  if (!supabase) return
   await supabase.from('craft_log').insert({
     player_address: address.toLowerCase(),
     recipe_id:      recipeId,
@@ -78,6 +102,7 @@ export async function logAIEvent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: Record<string, any>,
 ): Promise<void> {
+  if (!supabase) return
   await supabase.from('ai_events').insert({
     player_address:      address.toLowerCase(),
     epoch,

@@ -2,7 +2,7 @@ import { createNoise2D } from 'simplex-noise'
 import {
   WORLD_SIZE, TILE_SIZE,
   NOISE_WATER, NOISE_SAND, NOISE_GRASS,
-  SPAWN_TREE, SPAWN_FLOWER, SPAWN_CHICKEN, SPAWN_ZOMBIE, SPAWN_DOG,
+  SPAWN_FLOWER, SPAWN_CHICKEN, SPAWN_ZOMBIE, SPAWN_DOG,
 } from '../constants'
 
 // Seeded PRNG (mulberry32) ──────────────────────────────────────────────────
@@ -16,12 +16,23 @@ function mulberry32(seed: number): () => number {
   }
 }
 
+/**
+ * 32-bit avalanche mix, bit-identical to GenSurvivalGame._hash in
+ * contracts/player_registry.py. Math.imul and >>> keep every step in exact
+ * uint32 arithmetic, which is the only arithmetic both languages can agree on:
+ * plain `*` overflows into float64 here, and `^` silently truncates to int32.
+ */
 function chainHash(x: number, y: number, salt: number): number {
-  let v = x * 374761393 + y * 668265263 + salt * 1442695041
-  if (v < 0) v = -v
-  v = (v ^ Math.floor(v / 1274126177)) * 1274126177
-  if (v < 0) v = -v
-  return Math.floor(v % 10000)
+  let h =
+    (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(salt, 1442695041)) >>> 0
+  h = (h ^ (h >>> 15)) >>> 0
+  h = Math.imul(h, 2246822519) >>> 0
+  h = (h ^ (h >>> 13)) >>> 0
+  h = Math.imul(h, 3266489917) >>> 0
+  // The >>> 0 here is load-bearing: `^` yields a *signed* int32, so without it
+  // a high-bit result goes negative and `% 10000` returns a negative index.
+  h = (h ^ (h >>> 16)) >>> 0
+  return h % 10000
 }
 
 function chainRockTile(tx: number, ty: number): 5 | 6 | 9 | null {
@@ -48,15 +59,44 @@ function quarryRockTile(tx: number, ty: number): 5 | 6 | 9 | null {
   const cy = Math.floor(WORLD_SIZE / 2) + 8
   const dx = tx - cx
   const dy = ty - cy
-  const ridge = (dx * dx) / (38 * 38) + (dy * dy) / (24 * 24)
+  // Scaled integer ellipse test, matching _quarry_rock_at in the contract.
+  // Float division here used to disagree with the contract's integer form on
+  // tiles right at the quarry boundary.
+  const ridge = Math.floor((dx * dx * 10000) / (38 * 38)) +
+                Math.floor((dy * dy * 10000) / (24 * 24))
   const chippedEdge = chainHash(tx, ty, 71) > 1150
-  if (ridge > 1 || !chippedEdge) return null
+  if (ridge > 10000 || !chippedEdge) return null
 
   const vein = chainHash(tx, ty, 73)
   if (vein > 9300) return 6
   if (vein > 7600) return 9
   return 5
 }
+
+// Must equal TREE_HASH_SALT / TREE_HASH_THRESHOLD in
+// contracts/player_registry.py. Changing either side alone makes the contract
+// reject legitimate chops.
+const TREE_HASH_SALT = 53
+const TREE_HASH_THRESHOLD = 850
+
+/**
+ * Tree placement, mirrored bit-for-bit by GenSurvivalGame._tree_exists_at in
+ * contracts/player_registry.py. Trees must be derivable per coordinate so the
+ * contract can verify a chop instead of trusting the client; the old
+ * sequential-rng placement depended on chunk iteration order and could not be
+ * reproduced on-chain.
+ */
+export function chainTreeAt(tx: number, ty: number): boolean {
+  return chainHash(tx, ty, TREE_HASH_SALT) < TREE_HASH_THRESHOLD
+}
+
+// Remaining spawns are per-coordinate too, so a chunk generates the same
+// contents no matter when or in what order it is visited. Bands are cumulative
+// over 0..9999 and reproduce the previous 1/60, 1/200, 1/400, 1/500 rates.
+const SPAWN_FLOWER_MAX  = 10000 / SPAWN_FLOWER                        // 167
+const SPAWN_CHICKEN_MAX = SPAWN_FLOWER_MAX + 10000 / SPAWN_CHICKEN    // 217
+const SPAWN_ZOMBIE_MAX  = SPAWN_CHICKEN_MAX + 10000 / SPAWN_ZOMBIE    // 242
+const SPAWN_DOG_MAX     = SPAWN_ZOMBIE_MAX + 10000 / SPAWN_DOG        // 262
 
 export interface SpawnDef {
   type: string   // EntityType or 'ITEM'
@@ -77,15 +117,12 @@ export interface GeneratedChunk {
  */
 export class WorldGenerator {
   private noise2D: (x: number, y: number) => number
-  private rng: () => number
   private readonly worldSeed: number
 
   constructor(seed: number) {
     this.worldSeed = seed
     // Seed simplex via a derived hash
-    const rng = mulberry32(seed)
-    this.noise2D = createNoise2D(rng)
-    this.rng     = mulberry32(seed ^ 0xdeadbeef)
+    this.noise2D = createNoise2D(mulberry32(seed))
   }
 
   /** Island falloff: 0 at edges → 1 at centre, based on Euclidean dist */
@@ -111,7 +148,6 @@ export class WorldGenerator {
   generateChunk(chunkX: number, chunkY: number, CHUNK_SIZE: number): GeneratedChunk {
     const tiles  = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE)
     const spawns: SpawnDef[] = []
-    const rng = mulberry32(this.worldSeed ^ (chunkX * 73856093 ^ chunkY * 19349663))
 
     for (let ly = 0; ly < CHUNK_SIZE; ly++) {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -137,35 +173,32 @@ export class WorldGenerator {
 
         tiles[ly * CHUNK_SIZE + lx] = tileIndex
 
-        // Entity spawns on walkable tiles
+        // Entity spawns on walkable tiles. Every roll below is a pure function
+        // of the tile coordinate: trees have to be, because the contract
+        // verifies them, and the rest follow for consistency.
         if (walkable) {
-          const r = rng()
-
-          const tTree    = 1 / SPAWN_TREE                         // 0.0833
-          const tFlower  = tTree   + 1 / SPAWN_FLOWER             // 0.1000
-          const tChicken = tFlower + 1 / SPAWN_CHICKEN            // 0.1050
-          const tZombie  = tChicken + 1 / SPAWN_ZOMBIE            // 0.1075
-          const tDog     = tZombie  + 1 / SPAWN_DOG               // 0.1095
-
-          if      (r < tTree)    { spawns.push({ type: 'TREE',    tileX: tx, tileY: ty }) }
-          else if (r < tFlower)  { spawns.push({ type: 'FLOWER',  tileX: tx, tileY: ty }) }
-          else if (r < tChicken) { spawns.push({ type: 'CHICKEN', tileX: tx, tileY: ty }) }
-          else if (r < tZombie)  { spawns.push({ type: 'ZOMBIE',  tileX: tx, tileY: ty }) }
-          else if (r < tDog)     { spawns.push({ type: 'DOG',     tileX: tx, tileY: ty }) }
+          if (chainTreeAt(tx, ty)) {
+            spawns.push({ type: 'TREE', tileX: tx, tileY: ty })
+          } else {
+            const e = chainHash(tx, ty, 59)
+            if      (e < SPAWN_FLOWER_MAX)  { spawns.push({ type: 'FLOWER',  tileX: tx, tileY: ty }) }
+            else if (e < SPAWN_CHICKEN_MAX) { spawns.push({ type: 'CHICKEN', tileX: tx, tileY: ty }) }
+            else if (e < SPAWN_ZOMBIE_MAX)  { spawns.push({ type: 'ZOMBIE',  tileX: tx, tileY: ty }) }
+            else if (e < SPAWN_DOG_MAX)     { spawns.push({ type: 'DOG',     tileX: tx, tileY: ty }) }
+          }
 
           // ── Scattered ground resources ─────────────────────────────────
           // Loose items visible on the ground: sticks, stones, ore chips.
           // These give the world visual richness and are permanent (lifetimeMs=0).
-          const rItem = rng()
-          if (rItem < 0.002) {
+          const rItem = chainHash(tx, ty, 61)
+          if (rItem < 20) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'COAL', count: 1 })
-          } else if (rItem < 0.006) {
+          } else if (rItem < 60) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'IRON_ORE', count: 1 })
-          } else if (rItem < 0.012) {
+          } else if (rItem < 120) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'STONE', count: 1 })
-          } else if (rItem < 0.020) {
-            const rv = rng()
-            const itemId = rv < 0.65 ? 'WOOD_STICK' : 'WOOD_LOG'
+          } else if (rItem < 200) {
+            const itemId = chainHash(tx, ty, 67) < 6500 ? 'WOOD_STICK' : 'WOOD_LOG'
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId, count: 1 })
           }
         }

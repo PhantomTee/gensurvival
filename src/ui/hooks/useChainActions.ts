@@ -226,25 +226,30 @@ export function useChainActions() {
         reasoning:        result.reasoning,
       }
 
-      // Snapshot oracle delta BEFORE apply_inventory_delta (which only persists losses)
-      const oracleInventoryDelta = { ...delta.inventoryDelta }
-
       useGameStore.getState().setTxStatus(true, 'Applying AI effect on-chain...')
-      await applyInventoryDeltaOnChain(
+      const applied = await applyInventoryDeltaOnChain(
         client,
         `${useGameStore.getState().epochInfo?.currentEpoch ?? 0}-${result.event_name}`,
         delta.inventoryDelta,
         delta.xpDelta,
       )
 
-      // Restore oracle delta so local game state reflects full event (gains + losses)
-      delta.inventoryDelta = oracleInventoryDelta
+      // The chain is the only authority on inventory. apply_inventory_delta
+      // persists losses and drops gains, so mirror exactly what it applied -
+      // showing the oracle's ungranted gains locally used to leave the player
+      // with items that every later craft transaction would reject.
+      delta.inventoryDelta = applied.applied_delta ?? {}
 
       const currentStore = useGameStore.getState()
       if (delta.houseDamaged && currentStore.houses.length > 0) {
+        // Damage the player's most valuable undamaged house rather than
+        // always houses[0], which left every house after the first untouchable.
+        const target =
+          [...currentStore.houses]
+            .sort((a, b) => Number(a.damaged) - Number(b.damaged) || b.quality - a.quality)[0]
         await applyHouseEvent(
           client,
-          currentStore.houses[0].tokenId,
+          target.tokenId,
           true,
           delta.houseQualityDelta,
           `${currentStore.epochInfo?.currentEpoch ?? 0}-${result.event_name}`,
@@ -300,8 +305,9 @@ export function useChainActions() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       useGameStore.getState().setTxStatus(false, '')
-      window.dispatchEvent(new CustomEvent('gensurvival:fishResult', { detail: { itemId: 'FISH', count: 1 } }))
-      toast.error(`Fishing tx failed (${msg}) — local fish granted`)
+      // No local grant on failure: the chain owns the inventory, and handing
+      // out a fish here desynced it from what crafting can actually spend.
+      toast.error(`Fishing failed: ${msg}`)
       return null
     }
   }, [])

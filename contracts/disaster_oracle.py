@@ -11,10 +11,14 @@ CALL_WINDOW = 1 * 3600
 MAX_CALLS_PER_DAY = 4
 DAY_SECONDS = 24 * 3600
 
+# Live RSS feeds, verified reachable. Reuters retired its public RSS and
+# apnews.com/rss now 404s, so both were replaced - with them in the list two of
+# every three fetches returned "(unavailable)" and the game master was really
+# reading BBC alone.
 NEWS_SOURCES = [
-    "https://www.bbc.com/news",
-    "https://www.reuters.com",
-    "https://apnews.com",
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "https://www.theguardian.com/world/rss",
+    "https://feeds.npr.org/1004/rss.xml",
 ]
 
 
@@ -121,12 +125,7 @@ class DisasterOracle(gl.Contract):
             # Fetch compact RSS/text headlines only — smaller responses improve
             # equivalence stability (less variance in what each validator sees).
             news_texts = []
-            rss_sources = [
-                "https://feeds.bbci.co.uk/news/rss.xml",
-                "https://feeds.reuters.com/reuters/topNews",
-                "https://apnews.com/rss",
-            ]
-            for url in rss_sources:
+            for url in NEWS_SOURCES:
                 try:
                     response = gl.nondet.web.get(url)
                     body = response.body.decode("utf-8", errors="replace")
