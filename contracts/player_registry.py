@@ -41,11 +41,14 @@ RECIPES = {
     # Furnace
     "iron_ingot":   {"inputs": {"IRON_ORE": 2, "COAL": 1},                   "output": "IRON_INGOT",   "output_count": 1,  "station": "FURNACE"},
     "cooked_meat":  {"inputs": {"RAW_MEAT": 1, "COAL": 1},                   "output": "COOKED_MEAT",  "output_count": 1,  "station": "FURNACE"},
-    # House deed — special: triggers mint_house flow on client after crafting
-    "house_deed": {
-        "inputs": {"WOOD_PLANK": 40, "STONE": 30, "WOOD_WALL": 16, "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5},
-        "output": "HOUSE_DEED", "output_count": 1, "station": "BENCH",
-    },
+    # No "house_deed" entry on purpose. The client intercepts that recipe id in
+    # doCraft() and routes it to mint_house instead of craft(), so it never
+    # reached this table through the UI - but it was still reachable over raw
+    # RPC, where it burned a full house's materials for a HOUSE_DEED item that
+    # mint_house neither requires nor consumes. craft() now rejects it as an
+    # unknown recipe. The cost the player actually pays is HOUSE_MATERIAL_COST
+    # below, deducted once in mint_house; the client keeps its own house_deed
+    # entry in src/game/registry/RECIPES.ts purely to price the Build button.
 }
 
 # ── Placeable items ───────────────────────────────────────────────────────────
@@ -65,7 +68,9 @@ PLACEABLE_ITEMS = {
 FISHING_DROPS  = ["FISH", "FISH", "FISH", "WOOD_STICK", "STONE"]  # 60 % fish
 MINEABLE_DROPS = {"ROCK": "STONE", "COAL_ORE": "COAL", "IRON_ORE": "IRON_ORE"}
 
-# Material cost for minting a house — must match RECIPES["house_deed"]["inputs"]
+# Material cost for minting a house, deducted once in mint_house. Keep this in
+# step with the house_deed entry in src/game/registry/RECIPES.ts, which is what
+# the crafting UI shows the player before they build.
 HOUSE_MATERIAL_COST = {
     "WOOD_PLANK": 40, "STONE": 30, "WOOD_WALL": 16,
     "WOOD_FLOOR": 16, "IRON_INGOT": 8, "COAL": 5,
