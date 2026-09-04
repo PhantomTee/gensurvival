@@ -153,23 +153,7 @@ export class WorldGenerator {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const tx = chunkX * CHUNK_SIZE + lx
         const ty = chunkY * CHUNK_SIZE + ly
-        const v  = this.sample(tx, ty)
-        const rockTile = chainRockTile(tx, ty)
-
-        let tileIndex: number
-        let walkable = false
-
-        if      (v < NOISE_WATER) { tileIndex = 1 }                         // WATER
-        else if (v < NOISE_SAND)  { tileIndex = 2 }                         // SAND
-        else if (v < NOISE_GRASS) { tileIndex = 4; walkable = true }        // GRASS
-        else                       { tileIndex = 4; walkable = true }        // highland grass
-
-        // Rocky biome: broad stone-land regions like upstream GenSurvival's rock
-        // terrain layer. These are land tiles, not scattered object chunks.
-        if (walkable && v > NOISE_SAND + 0.03 && rockTile != null) {
-          walkable = false
-          tileIndex = rockTile
-        }
+        const { tileIndex, walkable } = this.tileAt(tx, ty)
 
         tiles[ly * CHUNK_SIZE + lx] = tileIndex
 
@@ -209,18 +193,72 @@ export class WorldGenerator {
   }
 
   /** Find the best spawn tile for the player (first walkable GRASS tile near centre) */
+  /**
+   * The final tile at a coordinate — the single source of truth for what the
+   * world looks like there.
+   *
+   * findSpawn used to re-derive this from raw simplex noise alone, ignoring the
+   * rock overlay applied afterwards. Since the quarry sits at world-centre +40
+   * on x and the search walked straight along +x, players were reliably dropped
+   * into the middle of it.
+   */
+  tileAt(tx: number, ty: number): { tileIndex: number; walkable: boolean } {
+    const v = this.sample(tx, ty)
+    const rockTile = chainRockTile(tx, ty)
+
+    let tileIndex: number
+    let walkable = false
+
+    if      (v < NOISE_WATER) { tileIndex = 1 }                  // WATER
+    else if (v < NOISE_SAND)  { tileIndex = 2 }                  // SAND
+    else if (v < NOISE_GRASS) { tileIndex = 4; walkable = true } // GRASS
+    else                      { tileIndex = 4; walkable = true } // highland grass
+
+    // Rocky biome: broad stone-land regions, not scattered boulders.
+    if (walkable && v > NOISE_SAND + 0.03 && rockTile != null) {
+      walkable = false
+      tileIndex = rockTile
+    }
+
+    return { tileIndex, walkable }
+  }
+
+  /** True when a tile and everything within `pad` of it is open ground. */
+  private isOpenGround(tx: number, ty: number, pad: number): boolean {
+    for (let y = ty - pad; y <= ty + pad; y++) {
+      for (let x = tx - pad; x <= tx + pad; x++) {
+        if (!this.tileAt(x, y).walkable) return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * Spiral out from world centre for genuinely open ground.
+   *
+   * Searching a ring rather than a single axis matters: the old +x-only scan
+   * had no way to step around the quarry, so it either landed inside it or
+   * against its edge.
+   */
   findSpawn(): { x: number; y: number } {
     const cx = Math.floor(WORLD_SIZE / 2)
     const cy = Math.floor(WORLD_SIZE / 2)
-    for (let r = 0; r < 50; r++) {
-      const v = this.sample(cx + r, cy)
-      if (v >= NOISE_SAND && v < NOISE_GRASS) {
-        return {
-          x: (cx + r) * TILE_SIZE + TILE_SIZE / 2,
-          y: cy       * TILE_SIZE + TILE_SIZE / 2,
+    const at = (tx: number, ty: number) => ({
+      x: tx * TILE_SIZE + TILE_SIZE / 2,
+      y: ty * TILE_SIZE + TILE_SIZE / 2,
+    })
+
+    // Prefer a clearing with real breathing room, then relax the requirement.
+    for (const pad of [3, 2, 1]) {
+      for (let r = 0; r < 120; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue
+            if (this.isOpenGround(cx + dx, cy + dy, pad)) return at(cx + dx, cy + dy)
+          }
         }
       }
     }
-    return { x: cx * TILE_SIZE, y: cy * TILE_SIZE }
+    return at(cx, cy)
   }
 }

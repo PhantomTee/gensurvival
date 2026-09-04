@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useGameStore } from '../store'
 import { RECIPES, type RecipeDef } from '../../game/registry/RECIPES'
-import { ITEMS } from '../../game/registry/ITEMS'
+import { ITEMS, type ItemId } from '../../game/registry/ITEMS'
 import { ItemIcon } from './ItemIcon'
 import { useChainActions } from '../hooks/useChainActions'
 
@@ -13,9 +13,12 @@ export function CraftingPanel() {
   const txPending    = useGameStore((s) => s.txPending)
   const txStatus     = useGameStore((s) => s.txStatus)
   const walletAddr   = useGameStore((s) => s.walletAddress)
-  const { doCraft }  = useChainActions()
+  const { doCraft, doCraftFreeform } = useChainActions()
 
   const [qty, setQty] = useState(1)
+  const [improvising, setImprovising] = useState(false)
+  const [intent, setIntent] = useState('')
+  const [picked, setPicked] = useState<Record<string, number>>({})
 
   if (!open || !stats) return null
 
@@ -158,6 +161,97 @@ export function CraftingPanel() {
             </div>
           )
         })}
+      </div>
+
+      {/* ── Improvise: no recipe, the contract's AI rules on what you made ── */}
+      <div style={{ marginTop: 12, borderTop: '1px solid #4a3410', paddingTop: 10 }}>
+        <button
+          onClick={() => setImprovising(v => !v)}
+          disabled={noWallet || txPending}
+          style={{
+            width: '100%', padding: '6px 8px', cursor: noWallet ? 'not-allowed' : 'pointer',
+            background: improvising ? 'rgba(200,134,10,0.18)' : 'rgba(30,18,0,0.6)',
+            border: '1px solid #8b6914', borderRadius: 3, color: '#f5c842',
+            fontFamily: "'Press Start 2P', monospace", fontSize: 10,
+            opacity: noWallet ? 0.5 : 1,
+          }}>
+          {improvising ? '× CLOSE IMPROVISE' : '✦ IMPROVISE (no recipe)'}
+        </button>
+
+        {improvising && (
+          <div style={{ marginTop: 8 }}>
+            <p style={{
+              fontFamily: 'monospace', fontSize: 10, color: '#b8935a',
+              marginBottom: 6, lineHeight: 1.5,
+            }}>
+              Pick materials and say what you're trying to make. An on-chain AI decides
+              what comes out — and materials are spent even when nothing does.
+            </p>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+              {Object.entries(stats.inventory)
+                .filter(([, n]) => n > 0)
+                .map(([id, have]) => {
+                  const take = picked[id] ?? 0
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setPicked(p => {
+                        const next = { ...p }
+                        const v = (next[id] ?? 0) + 1
+                        if (v > have) delete next[id]
+                        else next[id] = v
+                        return next
+                      })}
+                      title={`${ITEMS[id as ItemId]?.displayName ?? id} — you have ${have}. Click to add, click past the max to clear.`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4,
+                        padding: '3px 6px', cursor: 'pointer',
+                        background: take > 0 ? 'rgba(74,222,128,0.15)' : 'rgba(0,0,0,0.35)',
+                        border: `1px solid ${take > 0 ? '#4ade80' : '#5a4a2a'}`,
+                        borderRadius: 3, color: take > 0 ? '#86efac' : '#c8b48a',
+                        fontFamily: 'monospace', fontSize: 10,
+                      }}>
+                      <ItemIcon id={id as ItemId} size={14} />
+                      {take > 0 ? `${take}/${have}` : have}
+                    </button>
+                  )
+                })}
+            </div>
+
+            <input
+              value={intent}
+              onChange={(e) => setIntent(e.target.value)}
+              onKeyDownCapture={(e) => e.stopPropagation()}
+              onKeyUpCapture={(e) => e.stopPropagation()}
+              maxLength={200}
+              placeholder="What are you trying to make?"
+              style={{
+                width: '100%', padding: '5px 7px', marginBottom: 6,
+                background: '#120b02', border: '1px solid #5a4a2a', borderRadius: 3,
+                color: '#e8d5a0', fontFamily: 'monospace', fontSize: 11, outline: 'none',
+              }}
+            />
+
+            <button
+              disabled={txPending || Object.keys(picked).length === 0 || intent.trim().length === 0}
+              onClick={async () => {
+                await doCraftFreeform(picked, intent.trim())
+                setPicked({})
+                setIntent('')
+              }}
+              style={{
+                width: '100%', padding: '6px 8px',
+                cursor: Object.keys(picked).length && intent.trim() ? 'pointer' : 'not-allowed',
+                background: 'rgba(74,222,128,0.12)', border: '1px solid #4ade80',
+                borderRadius: 3, color: '#86efac',
+                fontFamily: "'Press Start 2P', monospace", fontSize: 10,
+                opacity: txPending || !Object.keys(picked).length || !intent.trim() ? 0.4 : 1,
+              }}>
+              ATTEMPT IT
+            </button>
+          </div>
+        )}
       </div>
 
       {txPending && (

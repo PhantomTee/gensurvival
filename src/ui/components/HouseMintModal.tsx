@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useGameStore } from '../store'
 import { useChainActions } from '../hooks/useChainActions'
 import { HOUSE_COST } from '../../game/constants'
@@ -15,6 +16,8 @@ export function HouseMintModal() {
   // stale if the player crafted materials after the modal opened.
   const liveInv     = useGameStore((s) => s.playerStats?.inventory ?? EMPTY_INVENTORY)
   const { doMintHouse } = useChainActions()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
 
   if (!prompt) return null
 
@@ -26,9 +29,35 @@ export function HouseMintModal() {
                     bg-gray-950 border border-yellow-600 rounded-xl shadow-2xl p-5 max-w-sm w-full">
       <h2 className="text-yellow-300 font-mono font-bold text-base mb-2">🏠 Mint House NFT?</h2>
       <p className="text-gray-400 text-xs font-mono mb-4 leading-relaxed">
-        You've built a {prompt.widthTiles}×{prompt.heightTiles} house!
-        Minting it on-chain records your ownership and makes it eligible for AI events.
+        You've built a {prompt.widthTiles}×{prompt.heightTiles} structure. Minting
+        sends your actual placed tiles to the contract, where an on-chain AI grades
+        what you really built — from HOVEL to KEEP, quality 1 to 5. The grade sets
+        the NFT's rarity and your xp reward.
       </p>
+
+      <div className="mb-4 space-y-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDownCapture={(e) => e.stopPropagation()}
+          onKeyUpCapture={(e) => e.stopPropagation()}
+          maxLength={40}
+          placeholder="Name it — e.g. Stormwatch"
+          className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1
+                     text-gray-200 text-xs font-mono focus:border-yellow-600 outline-none"
+        />
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDownCapture={(e) => e.stopPropagation()}
+          onKeyUpCapture={(e) => e.stopPropagation()}
+          maxLength={280}
+          rows={2}
+          placeholder="Describe it. The judge reads your layout, not your claim — overselling an empty box scores 1/5."
+          className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1
+                     text-gray-200 text-xs font-mono resize-none focus:border-yellow-600 outline-none"
+        />
+      </div>
 
       <div className="mb-4">
         <p className="text-gray-300 text-xs font-mono mb-1">Materials required:</p>
@@ -51,10 +80,10 @@ export function HouseMintModal() {
       ) : (
         <div className="flex gap-2">
           <button
-            onClick={() => doMintHouse(prompt)}
+            onClick={() => doMintHouse({ ...prompt, name, description })}
             className="flex-1 py-2 rounded border border-yellow-600 text-yellow-300
                        font-mono text-xs hover:bg-yellow-900/40 transition-colors">
-            MINT NFT
+            MINT &amp; GRADE
           </button>
           <button
             onClick={dismiss}

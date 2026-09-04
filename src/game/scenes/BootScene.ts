@@ -84,7 +84,7 @@ export class BootScene extends Phaser.Scene {
     }
 
     for (const id of tileIds) {
-      for (let v = 0; v < 4; v++) {
+      for (let v = 0; v < 8; v++) {
         const canvas = document.createElement('canvas')
         canvas.width  = 16
         canvas.height = 16
@@ -97,10 +97,34 @@ export class BootScene extends Phaser.Scene {
         if (PNG_BACKED.includes(id)) {
           const src = this.textures.get(`_tile_raw_${id}`).getSourceImage() as HTMLImageElement | HTMLCanvasElement
           ctx.drawImage(src, 0, 0, 16, 16)
-          // v0 = original  v1 = –8 % (darker)  v2 = +6 % (lighter)  v3 = –5 %
-          if (v === 1) { ctx.fillStyle = 'rgba(0,0,0,0.08)';       ctx.fillRect(0, 0, 16, 16) }
-          if (v === 2) { ctx.fillStyle = 'rgba(255,255,255,0.06)';  ctx.fillRect(0, 0, 16, 16) }
-          if (v === 3) { ctx.fillStyle = 'rgba(0,0,0,0.05)';        ctx.fillRect(0, 0, 16, 16) }
+
+          // Eight brightness steps rather than four: with a hashed variant
+          // choice the extra steps read as natural grain instead of a pattern.
+          const STEPS = [0, -0.08, 0.06, -0.05, 0.03, -0.11, 0.09, -0.02]
+          const step = STEPS[v]
+          if (step < 0) { ctx.fillStyle = `rgba(0,0,0,${-step})`;        ctx.fillRect(0, 0, 16, 16) }
+          if (step > 0) { ctx.fillStyle = `rgba(255,255,255,${step})`;   ctx.fillRect(0, 0, 16, 16) }
+
+          // Stone reads as a flat blue-grey swatch when tiled over a whole
+          // quarry, so give it per-pixel grain and warm it towards the earth
+          // tones around it. Deterministic per variant, so no shimmering.
+          if (id === 'rock' || id === 'iron_ore') {
+            const img = ctx.getImageData(0, 0, 16, 16)
+            const d = img.data
+            for (let py = 0; py < 16; py++) {
+              for (let px = 0; px < 16; px++) {
+                const i = (py * 16 + px) * 4
+                let n = (Math.imul(px + 1, 374761393) ^ Math.imul(py + 1, 668265263) ^ Math.imul(v + 1, 2246822519)) >>> 0
+                n = (n ^ (n >>> 13)) >>> 0
+                const jitter = ((n % 21) - 10) * 1.6          // roughly +/- 16
+                d[i]     = Math.max(0, Math.min(255, d[i]     + jitter + 6))  // warm up red
+                d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + jitter + 2))
+                d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + jitter - 7))  // pull down blue
+              }
+            }
+            ctx.putImageData(img, 0, 0)
+          }
+
           this.textures.addCanvas(`tile_${id}_${v}`, canvas)
           continue
         }

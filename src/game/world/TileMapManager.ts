@@ -8,6 +8,20 @@ import { TILE_SIZE, CHUNK_SIZE } from '../constants'
 // at the screen edges.
 const RENDER_RADIUS = 4
 
+/** Number of visual variants baked per tile id in BootScene. */
+export const TILE_VARIANTS = 8
+
+/** 32-bit avalanche mix, so variant choice has no visible structure. */
+function tileVariant(wx: number, wy: number): number {
+  let v = (Math.imul(wx, 374761393) + Math.imul(wy, 668265263) + 0x9e3779b9) >>> 0
+  v = (v ^ (v >>> 15)) >>> 0
+  v = Math.imul(v, 2246822519) >>> 0
+  v = (v ^ (v >>> 13)) >>> 0
+  v = Math.imul(v, 3266489917) >>> 0
+  v = (v ^ (v >>> 16)) >>> 0
+  return v % TILE_VARIANTS
+}
+
 /**
  * Renders the tile world using a pool of Phaser.GameObjects.TileSprite /
  * Graphics objects keyed by chunk. Chunks are rendered on demand and
@@ -86,12 +100,13 @@ export class TileMapManager {
         const tileIndex = chunk.tiles[ly * CHUNK_SIZE + lx]
         const tileId    = TILE_BY_INDEX[tileIndex] ?? 'VOID'
 
-        // Pick one of 4 variants using a position hash — deterministic, never
-        // the same variant for two adjacent tiles, looks organic at any zoom.
-        // World tile coords: wx = cx*CHUNK_SIZE + lx, wy = cy*CHUNK_SIZE + ly
+        // Pick a variant from a properly mixed hash of the world coordinate.
+        // This was `(wx * 17 + wy * 31) % 4`, which is linear and therefore
+        // reduces to (wx + 3*wy) mod 4 — a hard diagonal stripe repeating every
+        // four tiles, glaringly visible across a large rock field.
         const wx      = cx * CHUNK_SIZE + lx
         const wy      = cy * CHUNK_SIZE + ly
-        const variant = Math.abs(wx * 17 + wy * 31) % 4
+        const variant = tileVariant(wx, wy)
         const tileKey = `tile_${tileId.toLowerCase()}_${variant}`
 
         if (this.scene.textures.exists(tileKey)) {
