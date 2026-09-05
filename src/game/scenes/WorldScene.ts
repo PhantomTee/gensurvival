@@ -142,7 +142,6 @@ export class WorldScene extends Phaser.Scene {
   private keyUpHandler: EventListener | null = null
   private blurHandler: (() => void) | null = null
   private heldKeys = new Set<string>()
-  private textInputFocused = false
 
   constructor() { super({ key: 'WorldScene' }) }
 
@@ -287,8 +286,9 @@ export class WorldScene extends Phaser.Scene {
     window.addEventListener('gensurvival:requestHouseMint', this.houseMintRequestHandler)
 
     this.textInputFocusHandler = ((e: CustomEvent) => {
-      this.textInputFocused = Boolean(e.detail)
-      if (this.textInputFocused) this.heldKeys.clear()
+      // Only used to drop held keys the moment a field takes focus; whether
+      // movement is blocked is decided from the DOM, not from this.
+      if (Boolean(e.detail)) this.heldKeys.clear()
     }) as EventListener
     window.addEventListener('gensurvival:textInputFocus', this.textInputFocusHandler)
 
@@ -1008,7 +1008,23 @@ export class WorldScene extends Phaser.Scene {
     const mv = this.player.components.movement!
     const cb = this.player.components.combat!
 
-    if (this.textInputFocused || document.activeElement?.tagName === 'INPUT') {
+    // Read focus from the DOM every frame rather than trusting a flag.
+    //
+    // The flag was set by a focus event and cleared by a blur event, but React
+    // does not fire blur on unmount — so registering a name, which unmounts the
+    // gate while its field is focused, left the flag stuck true and movement
+    // dead for the rest of the session. DOM state cannot get stuck like that.
+    //
+    // TEXTAREA matters as much as INPUT: the house description is a textarea,
+    // and typing in it used to walk the player around.
+    const focusedEl = document.activeElement as HTMLElement | null
+    const typing = !!focusedEl && (
+      focusedEl.tagName === 'INPUT' ||
+      focusedEl.tagName === 'TEXTAREA' ||
+      focusedEl.isContentEditable
+    )
+
+    if (typing) {
       mv.vx = 0
       mv.vy = 0
       this.heldKeys.clear()

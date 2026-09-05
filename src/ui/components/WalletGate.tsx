@@ -165,6 +165,11 @@ function NamePanel({ connecting }: { connecting: boolean }) {
           onChange={(e) => setName(e.target.value)}
           onFocus={() => setGameTextInputFocus(true)}
           onBlur={() => setGameTextInputFocus(false)}
+          ref={(el) => {
+            // React fires no blur on unmount, so release the game's keyboard
+            // explicitly when this field goes away.
+            if (el === null) setGameTextInputFocus(false)
+          }}
           onKeyDownCapture={(e) => e.stopPropagation()}
           onKeyUpCapture={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
