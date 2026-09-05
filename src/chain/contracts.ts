@@ -53,21 +53,46 @@ async function writeContract(
     returnValue?: unknown
     txExecutionResultName?: string
     consensus_data?: {
-      leader_receipt?: Array<{ result?: { status?: string; payload?: unknown } }>
+      leader_receipt?: Array<{
+        execution_result?: string
+        genvm_result?: { stderr?: string }
+        result?: { status?: string; payload?: unknown }
+      }>
     }
   }
 
-  // Guard: a tx can finalize with FINISHED_WITH_ERROR — the returnValue is then
-  // an error string, not the expected payload. Throw so callers see a real error.
-  if (receipt.txExecutionResultName === 'FINISHED_WITH_ERROR') {
-    const leader  = receipt.consensus_data?.leader_receipt?.[0]
-    const errText = typeof leader?.result?.payload === 'string'
-      ? leader.result.payload
-      : `Contract execution failed (${fn})`
-    throw new Error(errText)
+  // A transaction can finalize having failed, and then there is no return value
+  // to parse. This checked receipt.txExecutionResultName, which studionet does
+  // not send — so a rejected craft fell straight through to JSON.parse(undefined)
+  // and reported "undefined is not valid JSON" instead of the actual reason.
+  const leader = receipt?.consensus_data?.leader_receipt?.[0]
+  if (leader?.execution_result && leader.execution_result !== 'SUCCESS') {
+    throw new Error(contractErrorText(leader, fn))
   }
 
-  return extractReturnValue(receipt)
+  const value = extractReturnValue(receipt)
+  if (value === undefined) {
+    throw new Error(`${fn} returned nothing — the transaction may have failed.`)
+  }
+  return value
+}
+
+/**
+ * Turn a failed execution into the message the contract actually raised.
+ *
+ * GenVM puts the Python traceback in genvm_result.stderr, so the useful line —
+ * "Insufficient materials: need 3 WOOD_PLANK" — is the last assertion in it.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function contractErrorText(leader: any, fn: string): string {
+  const stderr: string = leader?.genvm_result?.stderr ?? ''
+  const assertions = stderr.match(/(?:AssertionError|Exception|Error):[ ]*([^\r\n]+)/g)
+  if (assertions && assertions.length > 0) {
+    return assertions[assertions.length - 1].replace(/^[A-Za-z]+:\s*/, '').trim()
+  }
+  const payload = leader?.result?.payload
+  if (typeof payload === 'string' && payload.length > 0) return payload
+  return `${fn} failed on-chain`
 }
 
 /**
@@ -84,7 +109,6 @@ function extractReturnValue(receipt: any): unknown {
   if (receipt?.returnValue !== undefined) return receipt.returnValue
 
   const leader = receipt?.consensus_data?.leader_receipt?.[0]
-    ?? receipt?.consensus_data?.leader_receipt
   const readable = leader?.result?.payload?.readable
   if (readable === undefined) return undefined
 

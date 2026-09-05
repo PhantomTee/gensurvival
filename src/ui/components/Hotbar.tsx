@@ -38,7 +38,10 @@ export function Hotbar() {
           <div
             key={i}
             onClick={() => selectSlot(i)}
-            title={itemDef ? `${itemDef.displayName}${count > 1 ? ` ×${count}` : ''}` : `Slot ${i + 1} (empty)`}
+            title={itemDef
+              ? `${itemDef.displayName}${count > 1 ? ` ×${count}` : ''}
+${itemDef.description}`
+              : `Slot ${i + 1} (empty)`}
             style={{
               width:  SLOT_SIZE,
               height: SLOT_SIZE,

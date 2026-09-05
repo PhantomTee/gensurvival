@@ -107,7 +107,9 @@ export function InventoryPanel() {
             if (def.healEnergy)  tipParts.push(`+${def.healEnergy} energy`)
             if (def.healHealth)  tipParts.push(`+${def.healHealth} HP`)
             if (def.miningPower) tipParts.push(`Power ${def.miningPower}`)
-            const tipText = tipParts.join('  ·  ')
+            const statLine = tipParts.slice(1).join('  ·  ')
+            const tipText = [def.displayName, def.description, statLine]
+              .filter(Boolean).join('\n')
 
             return (
               <div

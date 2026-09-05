@@ -89,7 +89,9 @@ export function CraftingPanel() {
           const craftable = canCraft(r)
           const outDef    = ITEMS[r.output]
           return (
-            <div key={r.id} style={{
+            <div key={r.id}
+              title={`${outDef.displayName} — ${outDef.description}`}
+              style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '6px 8px',
               background: craftable ? 'rgba(30,18,4,0.9)' : 'rgba(15,8,0,0.7)',
@@ -107,12 +109,26 @@ export function CraftingPanel() {
                   <ItemIcon id={r.output} size={24} />
                 </div>
                 <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 9, color: '#c8a060', marginTop: 2 }}>
-                  {r.outputCount * qty}× {outDef.displayName.split(' ')[0]}
+                  {r.outputCount * qty}×
                 </span>
               </div>
 
-              {/* Ingredient chips */}
-              <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {/* Name, description, then what it costs */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'Press Start 2P', monospace", fontSize: 10,
+                  color: craftable ? '#f5c842' : '#8a7350', marginBottom: 2,
+                }}>
+                  {outDef.displayName}
+                </div>
+                <div style={{
+                  fontFamily: 'monospace', fontSize: 10, color: '#8a7350',
+                  marginBottom: 4, lineHeight: 1.35,
+                }}>
+                  {outDef.description}
+                </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {Object.entries(r.inputs).map(([id, need]) => {
                   const have     = stats.inventory[id] ?? 0
                   const required = (need ?? 0) * qty
@@ -129,6 +145,7 @@ export function CraftingPanel() {
                     </span>
                   )
                 })}
+              </div>
               </div>
 
               {/* FORGE / BUILD button — house recipe gets special label */}

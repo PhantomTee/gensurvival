@@ -37,3 +37,6 @@ dist-ssr
 # Deployer private key, if one is ever kept in-repo.
 # The canonical location is ~/.genlayer/deployer.key, outside the repo.
 deploy/.deployer.key
+
+.vercel
+.env*
