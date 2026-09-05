@@ -15,6 +15,7 @@
 import { useCallback, useMemo } from 'react'
 import { useGameStore } from '../store'
 import { createWriteClient } from '../../chain/client'
+import { flush } from '../../chain/actionQueue'
 import {
   chopTree,
   claimGroundItem,
@@ -58,8 +59,13 @@ export function useChainActions() {
       return
     }
 
-    store.setTxStatus(true, 'Validating recipe on-chain...')
+    store.setTxStatus(true, 'Settling pending actions...')
     try {
+      // Crafting spends the chain's inventory, so everything gathered since the
+      // last settle has to land first or the recipe is checked against a state
+      // that is missing it.
+      await flush()
+      useGameStore.getState().setTxStatus(true, 'Validating recipe on-chain...')
       const { walletAddress, craftingStationX: sx, craftingStationY: sy } = store
       const client = createWriteClient(walletAddress)
       const delta  = await craftItem(client, recipeId, station, quantity, sx, sy)
@@ -153,8 +159,12 @@ export function useChainActions() {
     const store = useGameStore.getState()
     if (!store.walletAddress) { toast.error('Connect your wallet to mint a house.'); return }
 
-    store.setTxStatus(true, 'Minting verified house on-chain...')
+    store.setTxStatus(true, 'Settling pending actions...')
     try {
+      // The grader reads the placed tiles from storage, so queued placements
+      // must be on-chain before it looks.
+      await flush()
+      useGameStore.getState().setTxStatus(true, 'Minting verified house on-chain...')
       const client  = createWriteClient(store.walletAddress)
       const houseName = prompt.name?.trim() || 'My House'
       // The contract's LLM grades the actual placed tiles and ignores an
@@ -252,8 +262,10 @@ export function useChainActions() {
     const store = useGameStore.getState()
     if (!store.walletAddress) { toast.error('Connect your wallet to experiment.'); return null }
 
-    store.setTxStatus(true, 'Improvising... (~30s)')
+    store.setTxStatus(true, 'Settling pending actions...')
     try {
+      await flush()
+      useGameStore.getState().setTxStatus(true, 'Improvising... (~30s)')
       const client = createWriteClient(store.walletAddress)
       const result = await craftFreeform(client, inputs, intent)
 

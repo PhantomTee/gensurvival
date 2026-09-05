@@ -19,6 +19,7 @@ import { useGameStore }    from './ui/store'
 import { useChainActions } from './ui/hooks/useChainActions'
 import { getPlayerState, recordSurvivalDay } from './chain/contracts'
 import { pickRendererType } from './game/renderer'
+import { configureQueue, enqueue, installUnloadFlush } from './chain/actionQueue'
 import { createWriteClient } from './chain/client'
 
 function App() {
@@ -130,39 +131,44 @@ function App() {
   // Mount-only: listeners use chainRef.current so they always call the latest
   // chain functions without this effect needing to re-run (no [chain] dep).
   useEffect(() => {
+    // These are deterministic bookkeeping, so they queue and settle together
+    // instead of costing a transaction and a wallet prompt each.
+    configureQueue(() => useGameStore.getState().walletAddress)
+    const removeUnloadFlush = installUnloadFlush()
+
     const handleMineTile = ((e: CustomEvent) => {
       const { x, y, terrainType } = e.detail as { x: number; y: number; terrainType: string }
-      void chainRef.current.doMineTile(x, y, terrainType)
+      enqueue({ kind: 'mine', x, y, terrain: terrainType })
     }) as EventListener
 
     const handleChopTree = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chainRef.current.doChopTree(x, y)
+      enqueue({ kind: 'chop', x, y })
     }) as EventListener
 
     const handlePlaceBuild = ((e: CustomEvent) => {
       const { x, y, itemId } = e.detail as { x: number; y: number; itemId: string }
-      void chainRef.current.doPlaceBuildTile(x, y, itemId)
+      enqueue({ kind: 'place', x, y, item: itemId })
     }) as EventListener
 
     const handleFishAction = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chainRef.current.doFishTile(x, y)
+      enqueue({ kind: 'fish', x, y })
     }) as EventListener
 
     const handleGroundItem = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chainRef.current.doClaimGroundItem(x, y)
+      enqueue({ kind: 'ground', x, y })
     }) as EventListener
 
     const handleCatchChicken = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chainRef.current.doCatchChicken(x, y)
+      enqueue({ kind: 'chicken', x, y })
     }) as EventListener
 
     const handleBreakTile = ((e: CustomEvent) => {
       const { x, y } = e.detail as { x: number; y: number }
-      void chainRef.current.doBreakBuildTile(x, y)
+      enqueue({ kind: 'break', x, y })
     }) as EventListener
 
     window.addEventListener('gensurvival:mineTile', handleMineTile)
@@ -181,6 +187,7 @@ function App() {
       window.removeEventListener('gensurvival:claimGroundItem', handleGroundItem)
       window.removeEventListener('gensurvival:catchChicken', handleCatchChicken)
       window.removeEventListener('gensurvival:breakBuildTile', handleBreakTile)
+      removeUnloadFlush()
     }
   }, [])
 

@@ -276,6 +276,39 @@ export async function breakBuildTile(client: GenLayerClient, x: number, y: numbe
   return JSON.parse(raw) as ActionDelta
 }
 
+/** One entry in a settle_actions batch. */
+export type QueuedAction =
+  | { kind: 'chop' | 'fish' | 'ground' | 'chicken'; x: number; y: number }
+  | { kind: 'mine'; x: number; y: number; terrain: string }
+  | { kind: 'place'; x: number; y: number; item: string }
+  | { kind: 'break'; x: number; y: number }
+
+export interface SettleResult {
+  applied: Array<{ index: number; kind: string }>
+  rejected: Array<{ index: number; kind: string; reason: string }>
+  deduct: Record<string, number>
+  grant: Record<string, number>
+  inventory: Record<string, number>
+  xp: number
+  score: number
+}
+
+/**
+ * Apply many deterministic actions in one transaction.
+ *
+ * A rejected entry is reported rather than reverting the batch, so one stale
+ * action cannot cost the player everything else they did.
+ */
+export async function settleActions(
+  client: GenLayerClient,
+  actions: QueuedAction[],
+): Promise<SettleResult> {
+  const raw = await writeContract(
+    client, ADDRESSES.PLAYER_REGISTRY, 'settle_actions', [JSON.stringify(actions)],
+  ) as string
+  return JSON.parse(raw) as SettleResult
+}
+
 export async function getHousesOf(address: string): Promise<number[]> {
   try {
     const raw = await readContract<string>(ADDRESSES.PLAYER_REGISTRY, 'get_houses_of', [address])

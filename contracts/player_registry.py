@@ -100,6 +100,13 @@ MIN_GATHER_INTERVAL = 2      # seconds between two gather actions
 MAX_GATHER_STEP     = 48     # tiles between consecutive gather coordinates
 MAX_GATHERS_PER_DAY = 600
 
+# Deterministic actions settle in batches instead of one transaction each.
+# Placing a 12x12 house was 44 separate transactions and 44 wallet prompts; the
+# verification is unchanged, it is just amortised. Only the four AI-backed
+# methods stay one-per-transaction, which means every remaining prompt is a
+# moment where something is actually being judged.
+MAX_SETTLE_ACTIONS = 50
+
 # ── AI world events ──────────────────────────────────────────────────────────
 # Live RSS feeds, verified reachable. Reuters retired its public RSS and
 # apnews.com/rss now 404s, so both were replaced.
@@ -645,139 +652,78 @@ class GenSurvivalGame(gl.Contract):
 
     # ── World actions ─────────────────────────────────────────────────────────
 
-    @gl.public.write
-    def mine_tile(self, x: int, y: int, terrain_type: str) -> str:
-        # The contract derives the terrain itself - terrain_type is kept in the
-        # signature only for ABI compatibility and must agree with what we
-        # compute. Rock/ore placement is identical here and in the client's
-        # chainRockTile().
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
-        key = self._coord_key(addr_hex, int(x), int(y))
-        assert key not in self.mined_tiles, "Tile already mined"
+    # ── Shared action cores ───────────────────────────────────────────────────
+    # Each _apply_* verifies and mutates `state` in place, returning
+    # (deduct, grant). The single-action entry points and settle_actions both
+    # call these, so batching can never diverge from the direct path.
 
-        actual = self._terrain_at(0, int(x), int(y))
-        assert actual in MINEABLE_DROPS, "No mineable tile at these coordinates"
-        assert terrain_type == actual, "Claimed terrain does not match the world"
-        self._assert_and_record_gather(addr_hex, int(x), int(y))
-
-        drop  = MINEABLE_DROPS[actual]
-        state = self._get_state(addr_hex)
-        # The shared era pays out differently for everyone at once. A scarce
-        # resource still yields its base 1 - scarcity makes the bonus absent,
-        # it never takes the drop away.
-        grant = {drop: 1 + self._era_bonus(drop)}
-        self._grant_items(state, grant)
-        state["xp"] = int(state.get("xp", 0)) + 1
-        self.mined_tiles[key] = True
-        self._save_state(addr_hex, state)
-
-        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"], "xp": state["xp"], "score": state["score"]}, sort_keys=True)
-
-    @gl.public.write
-    def chop_tree(self, x: int, y: int) -> str:
-        # Tree placement is a per-coordinate hash, so the contract can verify a
-        # tree is really there. The client uses the same rule, restricted to
-        # walkable land - client trees are a subset of contract-valid ones.
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
+    def _apply_chop(self, addr_hex: str, state: dict, x: int, y: int) -> tuple:
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.chopped_trees, "Tree already chopped"
         assert self._tree_exists_at(int(x), int(y)), "No tree at these coordinates"
-        self._assert_and_record_gather(addr_hex, int(x), int(y))
-
-        state = self._get_state(addr_hex)
         grant = {"WOOD_LOG": 3 + self._era_bonus("WOOD_LOG")}
         self._grant_items(state, grant)
         state["xp"] = int(state.get("xp", 0)) + 1
         self.chopped_trees[key] = True
-        self._save_state(addr_hex, state)
+        return ({}, grant)
 
-        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"], "xp": state["xp"], "score": state["score"]}, sort_keys=True)
-
-    @gl.public.write
-    def fish_tile(self, x: int, y: int) -> str:
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
-
-        neighbors = [(int(x)-1, int(y)), (int(x)+1, int(y)), (int(x), int(y)-1), (int(x), int(y)+1)]
-        near_water = any(self._terrain_at(0, nx, ny) == "WATER" for nx, ny in neighbors)
-        assert near_water, "Must fish adjacent to water"
-        self._assert_and_record_gather(addr_hex, int(x), int(y))
-
-        # Deterministic drop from address entropy so the same spot gives variety per player
-        h = self._hash(0, int(x) + ord(addr_hex[2]) * 7, int(y) + ord(addr_hex[3]) * 13, 99)
-        drop  = FISHING_DROPS[h % len(FISHING_DROPS)]
-        state = self._get_state(addr_hex)
+    def _apply_mine(self, addr_hex: str, state: dict, x: int, y: int, terrain_type: str) -> tuple:
+        key = self._coord_key(addr_hex, int(x), int(y))
+        assert key not in self.mined_tiles, "Tile already mined"
+        actual = self._terrain_at(0, int(x), int(y))
+        assert actual in MINEABLE_DROPS, "No mineable tile at these coordinates"
+        assert terrain_type == "" or terrain_type == actual, "Claimed terrain does not match the world"
+        drop = MINEABLE_DROPS[actual]
         grant = {drop: 1 + self._era_bonus(drop)}
         self._grant_items(state, grant)
         state["xp"] = int(state.get("xp", 0)) + 1
-        self._save_state(addr_hex, state)
+        self.mined_tiles[key] = True
+        return ({}, grant)
 
-        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"], "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+    def _apply_fish(self, addr_hex: str, state: dict, x: int, y: int) -> tuple:
+        neighbors = [(int(x)-1, int(y)), (int(x)+1, int(y)), (int(x), int(y)-1), (int(x), int(y)+1)]
+        assert any(self._terrain_at(0, nx, ny) == "WATER" for nx, ny in neighbors), \
+            "Must fish adjacent to water"
+        h = self._hash(0, int(x) + ord(addr_hex[2]) * 7, int(y) + ord(addr_hex[3]) * 13, 99)
+        drop = FISHING_DROPS[h % len(FISHING_DROPS)]
+        grant = {drop: 1 + self._era_bonus(drop)}
+        self._grant_items(state, grant)
+        state["xp"] = int(state.get("xp", 0)) + 1
+        return ({}, grant)
 
-    @gl.public.write
-    def claim_ground_item(self, x: int, y: int) -> str:
-        """Pick up a loose item, verified against the world hash.
-
-        Ground pickups used to be granted client-side only, so the visible
-        inventory drifted from the chain inventory that crafting actually
-        spends - the UI said you had the wood and the transaction said you did
-        not, and a reload silently erased the difference.
-        """
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
+    def _apply_ground(self, addr_hex: str, state: dict, x: int, y: int) -> tuple:
         key = "gi:" + self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.mined_tiles, "Already picked up"
-
         item_id, count = self._ground_item_at(int(x), int(y))
         assert count > 0, "Nothing on the ground here"
-        self._assert_and_record_gather(addr_hex, int(x), int(y))
-
-        state = self._get_state(addr_hex)
         grant = {item_id: count + self._era_bonus(item_id)}
         self._grant_items(state, grant)
         self.mined_tiles[key] = True
-        self._save_state(addr_hex, state)
+        return ({}, grant)
 
-        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"],
-                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
-
-    @gl.public.write
-    def catch_chicken(self, x: int, y: int) -> str:
-        """Catch a chicken for meat, verified against the world hash."""
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
+    def _apply_chicken(self, addr_hex: str, state: dict, x: int, y: int) -> tuple:
         key = "ch:" + self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.mined_tiles, "That chicken is already caught"
         assert self._chicken_at(int(x), int(y)), "No chicken here"
-        self._assert_and_record_gather(addr_hex, int(x), int(y))
-
-        # Deterministic yield: the client cannot reroll for the better outcome.
         meat = CHICKEN_MEAT_MAX if self._hash(0, int(x), int(y), 83) > 7000 else CHICKEN_MEAT_MIN
-        state = self._get_state(addr_hex)
         grant = {"RAW_MEAT": meat}
         self._grant_items(state, grant)
         state["xp"] = int(state.get("xp", 0)) + 1
         self.mined_tiles[key] = True
-        self._save_state(addr_hex, state)
+        return ({}, grant)
 
-        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"],
-                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
-
-    @gl.public.write
-    def break_build_tile(self, x: int, y: int) -> str:
-        """Reclaim a tile you placed, and clear it from on-chain state.
-
-        Breaking a wall only ever happened client-side, so build_tiles kept the
-        wall forever: a player could place a house, break every wall to recover
-        the planks, and still satisfy _is_house_shape when minting.
-        """
-        addr_hex = self._caller()
-        self._require_registered(addr_hex)
+    def _apply_place(self, addr_hex: str, state: dict, x: int, y: int, item_id: str) -> tuple:
+        assert item_id in PLACEABLE_ITEMS, "Item cannot be placed"
         key = self._coord_key(addr_hex, int(x), int(y))
-        assert key in self.build_tiles, "Nothing of yours placed here"
+        occupied = key in self.build_tiles and self.build_tiles[key] != ""
+        assert not occupied, "Coordinate already occupied"
+        deduct = self._deduct_items(state, {item_id: 1}, 1)
+        self.build_tiles[key] = PLACEABLE_ITEMS[item_id]["tile"]
+        return (deduct, {})
 
+    def _apply_break(self, addr_hex: str, state: dict, x: int, y: int) -> tuple:
+        key = self._coord_key(addr_hex, int(x), int(y))
+        assert key in self.build_tiles and self.build_tiles[key] != "", "Nothing of yours placed here"
         tile = self.build_tiles[key]
         refund = {}
         for item_id, placed in PLACEABLE_ITEMS.items():
@@ -785,13 +731,199 @@ class GenSurvivalGame(gl.Contract):
                 refund = {item_id: 1}
                 break
         assert len(refund) > 0, "That tile cannot be reclaimed"
-
-        state = self._get_state(addr_hex)
         self._grant_items(state, refund)
         self.build_tiles[key] = ""
+        return ({}, refund)
+
+    def _apply_craft(self, addr_hex: str, state: dict, recipe_id: str, at_station: str,
+                     quantity: int, station_x: int, station_y: int) -> tuple:
+        assert recipe_id in RECIPES, "Unknown recipe"
+        assert 1 <= int(quantity) <= 64, "Quantity must be 1-64"
+        recipe = RECIPES[recipe_id]
+        assert at_station == recipe["station"], "Wrong crafting station"
+        if recipe["station"] != "HAND":
+            station_key = self._coord_key(addr_hex, int(station_x), int(station_y))
+            assert station_key in self.build_tiles, "Station not placed on-chain"
+            assert self.build_tiles[station_key] == recipe["station"], "Wrong on-chain station type"
+        deduct = self._deduct_items(state, recipe["inputs"], int(quantity))
+        grant = {recipe["output"]: int(recipe["output_count"]) * int(quantity)}
+        self._grant_items(state, grant)
+        state["xp"] = int(state.get("xp", 0)) + int(quantity)
+        return (deduct, grant)
+
+    # ── Batch settlement ──────────────────────────────────────────────────────
+
+    def _assert_batch_locality(self, addr_hex: str, coords: list) -> None:
+        """A batch must still describe a plausible walk.
+
+        The per-action interval check does not apply here — batching is a burst
+        by design — but the distance and daily-volume limits do, so a script
+        still cannot sweep the map or exceed a day's gathering in one call.
+        """
+        if len(coords) == 0:
+            return
+        now = self._now()
+        prev = None
+        if addr_hex in self.gather_log:
+            parts = self.gather_log[addr_hex].split(":")
+            prev = (int(parts[1]), int(parts[2]))
+            window_start = int(parts[3])
+            count = int(parts[4])
+        else:
+            window_start = now
+            count = 0
+
+        if now - window_start >= DAY_SECONDS:
+            window_start = now
+            count = 0
+        assert count + len(coords) <= MAX_GATHERS_PER_DAY, "Daily gathering limit reached"
+
+        for c in coords:
+            if prev is not None:
+                step = max(abs(c[0] - prev[0]), abs(c[1] - prev[1]))
+                assert step <= MAX_GATHER_STEP, "Gather coordinate too far from the previous action"
+            prev = c
+
+        self.gather_log[addr_hex] = (
+            str(now) + ":" + str(prev[0]) + ":" + str(prev[1]) + ":"
+            + str(window_start) + ":" + str(count + len(coords))
+        )
+
+    @gl.public.write
+    def settle_actions(self, actions_json: str) -> str:
+        """Apply a batch of deterministic actions in one transaction.
+
+        Entries are verified exactly as their single-action counterparts are —
+        same world hashes, same one-shot keys, same era bonuses — because they
+        run the same code. A failed entry is skipped and reported rather than
+        reverting the batch, so one stale action (a tree someone else felled, a
+        retry after a dropped response) cannot cost a player everything else
+        they did.
+        """
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+
+        actions = json.loads(actions_json)
+        assert isinstance(actions, list), "Actions must be a list"
+        assert 1 <= len(actions) <= MAX_SETTLE_ACTIONS, \
+            "Batch must hold 1-" + str(MAX_SETTLE_ACTIONS) + " actions"
+
+        gather_kinds = ("chop", "mine", "fish", "ground", "chicken")
+        coords = []
+        for a in actions:
+            if str(a.get("kind", "")) in gather_kinds:
+                coords.append((int(a.get("x", 0)), int(a.get("y", 0))))
+        self._assert_batch_locality(addr_hex, coords)
+
+        state = self._get_state(addr_hex)
+        applied = []
+        rejected = []
+        total_grant: dict = {}
+        total_deduct: dict = {}
+
+        for index, a in enumerate(actions):
+            kind = str(a.get("kind", ""))
+            x = int(a.get("x", 0))
+            y = int(a.get("y", 0))
+            try:
+                if   kind == "chop":    deduct, grant = self._apply_chop(addr_hex, state, x, y)
+                elif kind == "mine":    deduct, grant = self._apply_mine(addr_hex, state, x, y, str(a.get("terrain", "")))
+                elif kind == "fish":    deduct, grant = self._apply_fish(addr_hex, state, x, y)
+                elif kind == "ground":  deduct, grant = self._apply_ground(addr_hex, state, x, y)
+                elif kind == "chicken": deduct, grant = self._apply_chicken(addr_hex, state, x, y)
+                elif kind == "place":   deduct, grant = self._apply_place(addr_hex, state, x, y, str(a.get("item", "")))
+                elif kind == "break":   deduct, grant = self._apply_break(addr_hex, state, x, y)
+                elif kind == "craft":
+                    deduct, grant = self._apply_craft(
+                        addr_hex, state, str(a.get("recipe", "")), str(a.get("station", "HAND")),
+                        int(a.get("quantity", 1)), int(a.get("station_x", 0)), int(a.get("station_y", 0)))
+                else:
+                    raise Exception("Unknown action kind: " + kind)
+            except Exception as err:
+                rejected.append({"index": index, "kind": kind, "reason": str(err)[:120]})
+                continue
+
+            applied.append({"index": index, "kind": kind})
+            for item, n in grant.items():
+                total_grant[item] = int(total_grant.get(item, 0)) + int(n)
+            for item, n in deduct.items():
+                total_deduct[item] = int(total_deduct.get(item, 0)) + int(n)
+
         self._save_state(addr_hex, state)
 
-        return json.dumps({"deduct": {}, "grant": refund, "inventory": state["inventory"],
+        return json.dumps({
+            "applied":   applied,
+            "rejected":  rejected,
+            "deduct":    total_deduct,
+            "grant":     total_grant,
+            "inventory": state["inventory"],
+            "xp":        state["xp"],
+            "score":     state["score"],
+        }, sort_keys=True)
+
+    @gl.public.write
+    def mine_tile(self, x: int, y: int, terrain_type: str) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_mine(addr_hex, state, int(x), int(y), terrain_type)
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def chop_tree(self, x: int, y: int) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_chop(addr_hex, state, int(x), int(y))
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def fish_tile(self, x: int, y: int) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_fish(addr_hex, state, int(x), int(y))
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def claim_ground_item(self, x: int, y: int) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_ground(addr_hex, state, int(x), int(y))
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def catch_chicken(self, x: int, y: int) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_chicken(addr_hex, state, int(x), int(y))
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def break_build_tile(self, x: int, y: int) -> str:
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_break(addr_hex, state, int(x), int(y))
+        self._save_state(addr_hex, state)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
                            "xp": state["xp"], "score": state["score"]}, sort_keys=True)
 
     # ── Crafting ──────────────────────────────────────────────────────────────
@@ -800,26 +932,12 @@ class GenSurvivalGame(gl.Contract):
     def craft(self, recipe_id: str, at_station: str, quantity: int, station_x: int, station_y: int) -> str:
         addr_hex = self._caller()
         self._require_registered(addr_hex)
-        assert recipe_id in RECIPES, "Unknown recipe"
-        assert 1 <= int(quantity) <= 64, "Quantity must be 1-64"
-
-        recipe           = RECIPES[recipe_id]
-        required_station = recipe["station"]
-        assert at_station == required_station, "Wrong crafting station"
-
-        if required_station != "HAND":
-            station_key = self._coord_key(addr_hex, int(station_x), int(station_y))
-            assert station_key in self.build_tiles, "Station not placed on-chain"
-            assert self.build_tiles[station_key] == required_station, "Wrong on-chain station type"
-
-        state  = self._get_state(addr_hex)
-        deduct = self._deduct_items(state, recipe["inputs"], int(quantity))
-        grant  = {recipe["output"]: int(recipe["output_count"]) * int(quantity)}
-        self._grant_items(state, grant)
-        state["xp"] = int(state.get("xp", 0)) + int(quantity)
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_craft(addr_hex, state, recipe_id, at_station,
+                                          int(quantity), int(station_x), int(station_y))
         self._save_state(addr_hex, state)
-
-        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"], "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
 
     @gl.public.write
     def craft_freeform(self, inputs_json: str, intent: str) -> str:
@@ -922,21 +1040,15 @@ Return ONLY valid JSON:
     def place_build_tile(self, x: int, y: int, item_id: str) -> str:
         addr_hex = self._caller()
         self._require_registered(addr_hex)
-        assert item_id in PLACEABLE_ITEMS, "Item cannot be placed"
-
-        key = self._coord_key(addr_hex, int(x), int(y))
-        # A broken tile leaves an empty marker rather than a missing key, so
-        # rebuilding on the same spot has to be allowed explicitly.
-        occupied = key in self.build_tiles and self.build_tiles[key] != ""
-        assert not occupied, "Coordinate already occupied"
-
-        state  = self._get_state(addr_hex)
-        deduct = self._deduct_items(state, {item_id: 1}, 1)
+        state = self._get_state(addr_hex)
+        deduct, grant = self._apply_place(addr_hex, state, int(x), int(y), item_id)
         placed = PLACEABLE_ITEMS[item_id]
-        self.build_tiles[key] = placed["tile"]
         self._save_state(addr_hex, state)
 
-        return json.dumps({"deduct": deduct, "grant": {}, "inventory": state["inventory"], "placed": {"x": int(x), "y": int(y), "item_id": item_id, "tile": placed["tile"], "kind": placed["kind"]}}, sort_keys=True)
+        return json.dumps({"deduct": deduct, "grant": grant, "inventory": state["inventory"],
+                           "placed": {"x": int(x), "y": int(y), "item_id": item_id,
+                                      "tile": placed["tile"], "kind": placed["kind"]}},
+                          sort_keys=True)
 
     # ── House minting ─────────────────────────────────────────────────────────
 
