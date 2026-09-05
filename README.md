@@ -68,9 +68,12 @@ crafting, building — are verified on-chain.
 **Blockchain:** one Python [GenLayer Intelligent Contract](https://docs.genlayer.com)
 on Studionet.
 
+The address is not repeated here — the deploy script patches
+`src/chain/addresses.ts`, so pinning it in prose only guarantees it goes stale.
+
 | Contract | Address | Role |
 |----------|---------|------|
-| `GenSurvivalGame` | `0x5613649C8C8FE4460e3C3B5888d9014375a5182C` | Everything: registry, inventory, gathering, crafting, houses, leaderboard, the shared world era and AI events |
+| `GenSurvivalGame` | see [`src/chain/addresses.ts`](src/chain/addresses.ts) | Everything: registry, inventory, gathering, crafting, houses, leaderboard, the shared world era and AI events |
 
 It was previously two contracts. A separate oracle could only *recommend* an
 event, and the registry receiving that recommendation had no way to tell it from
@@ -96,6 +99,17 @@ reads from the contract, not from Supabase.
 | | The shared world era |
 | | AI event outcomes |
 | | Leaderboard |
+
+Deterministic actions — gathering, placing, salvaging — are queued client-side
+and settled in one `settle_actions` transaction rather than one each. Placing a
+12x12 house was 44 separate transactions and 44 wallet prompts. Verification is
+identical either way: the batch and the single-action methods call the same
+`_apply_*` cores, so they cannot drift.
+
+That leaves exactly four calls that are one transaction each — `refresh_world`,
+`mint_house`, `craft_freeform` and `trigger_world_event` — which are precisely
+the four where an AI decides something. Every wallet prompt in the game marks a
+moment of judgement rather than bookkeeping.
 
 The contract derives terrain and tree placement from the same hash the client
 uses, so it verifies gathering rather than trusting the client's word for it.

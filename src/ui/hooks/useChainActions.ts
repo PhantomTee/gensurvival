@@ -88,68 +88,8 @@ export function useChainActions() {
     }
   }, [])
 
-  // ── doMineTile ───────────────────────────────────────────────────────────
-  const doMineTile = useCallback(async (x: number, y: number, terrainType: string) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) { toast.error('Connect your wallet to mine on-chain.'); return }
 
-    store.setTxStatus(true, 'Mining tile on-chain...')
-    try {
-      const client = createWriteClient(store.walletAddress)
-      const delta  = await mineTile(client, x, y, terrainType)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      window.dispatchEvent(new CustomEvent('gensurvival:chainMineConfirmed', { detail: { x, y, delta } }))
-      useGameStore.getState().setTxStatus(false, '')
-      return delta
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      useGameStore.getState().setTxStatus(false, '')
-      toast.error(`Mining failed: ${msg}`)
-      window.dispatchEvent(new CustomEvent('gensurvival:chainMineRejected', { detail: { x, y } }))
-      return null
-    }
-  }, [])
 
-  // ── doChopTree ───────────────────────────────────────────────────────────
-  const doChopTree = useCallback(async (x: number, y: number) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) { toast.error('Connect your wallet to chop trees on-chain.'); return }
-
-    store.setTxStatus(true, 'Recording chopped tree on-chain...')
-    try {
-      const client = createWriteClient(store.walletAddress)
-      const delta  = await chopTree(client, x, y)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      useGameStore.getState().setTxStatus(false, '')
-      return delta
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      useGameStore.getState().setTxStatus(false, '')
-      toast.error(`Tree chop failed: ${msg}`)
-      return null
-    }
-  }, [])
-
-  // ── doPlaceBuildTile ─────────────────────────────────────────────────────
-  const doPlaceBuildTile = useCallback(async (x: number, y: number, itemId: string) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) { toast.error('Connect your wallet to build on-chain.'); return }
-
-    store.setTxStatus(true, 'Placing build tile on-chain...')
-    try {
-      const client = createWriteClient(store.walletAddress)
-      const delta  = await placeBuildTile(client, x, y, itemId)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      window.dispatchEvent(new CustomEvent('gensurvival:chainPlaceConfirmed', { detail: { x, y, itemId, delta } }))
-      useGameStore.getState().setTxStatus(false, '')
-      return delta
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      useGameStore.getState().setTxStatus(false, '')
-      toast.error(`Build failed: ${msg}`)
-      return null
-    }
-  }, [])
 
   // ── doMintHouse ──────────────────────────────────────────────────────────
   const doMintHouse = useCallback(async (prompt: {
@@ -212,44 +152,8 @@ export function useChainActions() {
   // These were local-only grants, so the visible inventory drifted from the
   // chain inventory that crafting spends. Each is verified against the world
   // hash contract-side, so the client cannot invent them.
-  const doClaimGroundItem = useCallback(async (x: number, y: number) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) return null
-    try {
-      const delta = await claimGroundItem(createWriteClient(store.walletAddress), x, y)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      return delta
-    } catch (err: unknown) {
-      toast.error(`Pickup failed: ${err instanceof Error ? err.message : String(err)}`)
-      return null
-    }
-  }, [])
 
-  const doCatchChicken = useCallback(async (x: number, y: number) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) return null
-    try {
-      const delta = await catchChicken(createWriteClient(store.walletAddress), x, y)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      return delta
-    } catch (err: unknown) {
-      toast.error(`Catch failed: ${err instanceof Error ? err.message : String(err)}`)
-      return null
-    }
-  }, [])
 
-  const doBreakBuildTile = useCallback(async (x: number, y: number) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) return null
-    try {
-      const delta = await breakBuildTile(createWriteClient(store.walletAddress), x, y)
-      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
-      return delta
-    } catch (err: unknown) {
-      toast.error(`Salvage failed: ${err instanceof Error ? err.message : String(err)}`)
-      return null
-    }
-  }, [])
 
   // ── doCraftFreeform ──────────────────────────────────────────────────────
   // The open counterpart to doCraft: instead of looking up a fixed recipe, the
@@ -372,34 +276,10 @@ export function useChainActions() {
     }
   }, [])
 
-  // ── doFishTile ───────────────────────────────────────────────────────────
-  const doFishTile = useCallback(async (x: number, y: number) => {
-    const store = useGameStore.getState()
-    if (!store.walletAddress) { toast.error('Connect your wallet to fish on-chain.'); return }
-
-    store.setTxStatus(true, 'Fishing on-chain… 🎣')
-    try {
-      const client = createWriteClient(store.walletAddress)
-      const delta  = await fishTile(client, x, y)
-      const granted = Object.entries(delta.grant)
-      const itemId  = granted[0]?.[0] ?? 'FISH'
-      const count   = granted[0]?.[1] ?? 1
-      window.dispatchEvent(new CustomEvent('gensurvival:fishResult', { detail: { itemId, count } }))
-      useGameStore.getState().setTxStatus(false, '')
-      return delta
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      useGameStore.getState().setTxStatus(false, '')
-      // No local grant on failure: the chain owns the inventory, and handing
-      // out a fish here desynced it from what crafting can actually spend.
-      toast.error(`Fishing failed: ${msg}`)
-      return null
-    }
-  }, [])
 
   // Stable object — only created once because all callbacks have [] deps
   return useMemo(
-    () => ({ doCraft, doCraftFreeform, doClaimGroundItem, doCatchChicken, doBreakBuildTile, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile }),
-    [doCraft, doCraftFreeform, doClaimGroundItem, doCatchChicken, doBreakBuildTile, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile],
+    () => ({ doCraft, doCraftFreeform, doMintHouse, doRefreshWorld, doSubmitEvent }),
+    [doCraft, doCraftFreeform, doMintHouse, doRefreshWorld, doSubmitEvent],
   )
 }
