@@ -49,7 +49,7 @@ function App() {
       parent:          canvasRef.current!,
       width:           window.innerWidth,
       height:          window.innerHeight,
-      backgroundColor: '#0a0a1a',
+      backgroundColor: '#1a1206',   // soil, not navy
       pixelArt:        true,   // nearest-neighbour filtering — no pixel bleeding at seams
       audio:           { noAudio: true },
       scene:           [BootScene, MainMenuScene, WorldScene, PauseScene],

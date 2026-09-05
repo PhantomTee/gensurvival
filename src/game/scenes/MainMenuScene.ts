@@ -19,24 +19,24 @@ export class MainMenuScene extends Phaser.Scene {
     const { width, height } = this.scale
 
     // Dark background
-    this.add.rectangle(width / 2, height / 2, width, height, 0x0a0a1a)
+    this.add.rectangle(width / 2, height / 2, width, height, 0x1a1206)
 
     // Decorative scanline overlay
     for (let y = 0; y < height; y += 4) {
-      this.add.rectangle(width / 2, y, width, 1, 0x000000, 0.12).setDepth(0)
+      this.add.rectangle(width / 2, y, width, 1, 0x000000, 0.10).setDepth(0)
     }
 
     // Title
     this.add.text(width / 2, height * 0.28, 'GENSURVIVAL', {
       fontSize: '32px',
-      color: '#88aaff',
+      color: '#9dbf6a',
       fontFamily: "'Press Start 2P', monospace",
-      shadow: { offsetX: 4, offsetY: 4, color: '#0022aa', blur: 0, fill: true },
+      shadow: { offsetX: 4, offsetY: 4, color: '#2f1e08', blur: 0, fill: true },
     }).setOrigin(0.5)
 
     this.add.text(width / 2, height * 0.42, 'A GENLAYER SURVIVAL WORLD', {
       fontSize: '10px',
-      color: '#4466aa',
+      color: '#8a7350',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(0.5)
 
@@ -51,18 +51,18 @@ export class MainMenuScene extends Phaser.Scene {
     ].join('     ')
     this.add.text(width / 2, height * 0.52, hints, {
       fontSize: '7px',
-      color: '#334455',
+      color: '#6b5a3e',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(0.5)
 
     // Start button
     const btn = this.add.text(width / 2, height * 0.64, '[ START GAME ]', {
       fontSize: '16px',
-      color: '#44ff88',
+      color: '#7ec850',
       fontFamily: "'Press Start 2P', monospace",
-      backgroundColor: '#001a00',
+      backgroundColor: '#20180a',
       padding: { x: 20, y: 12 },
-      shadow: { offsetX: 3, offsetY: 3, color: '#004400', blur: 0, fill: true },
+      shadow: { offsetX: 3, offsetY: 3, color: '#33270f', blur: 0, fill: true },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true })
 
     // ── Core transition logic ─────────────────────────────────────────────
@@ -72,8 +72,8 @@ export class MainMenuScene extends Phaser.Scene {
       if (clicked) return
       clicked = true
       btn.setText('[ LOADING... ]')
-        .setColor('#556655')
-        .setBackgroundColor('#0a0f0a')
+        .setColor('#6b5a3e')
+        .setBackgroundColor('#171004')
         .disableInteractive()
       useGameStore.getState().setScreen('game')
       // Small delay so the repaint is visible before heavy WorldScene.create() runs
@@ -90,8 +90,8 @@ export class MainMenuScene extends Phaser.Scene {
     })
 
     // ── Start button ──────────────────────────────────────────────────────
-    btn.on('pointerover', () => { if (!clicked) btn.setColor('#88ffaa') })
-    btn.on('pointerout',  () => { if (!clicked) btn.setColor('#44ff88') })
+    btn.on('pointerover', () => { if (!clicked) btn.setColor('#a8e072') })
+    btn.on('pointerout',  () => { if (!clicked) btn.setColor('#7ec850') })
     btn.on('pointerdown', () => {
       if (clicked) return
 
@@ -112,14 +112,14 @@ export class MainMenuScene extends Phaser.Scene {
     // Hint text
     this.add.text(width / 2, height * 0.78, 'Connect your wallet (top-right) to play', {
       fontSize: '8px',
-      color: '#334455',
+      color: '#6b5a3e',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(0.5)
 
     // Version tag
     this.add.text(width - 10, height - 10, 'v0.1-alpha', {
       fontSize: '7px',
-      color: '#223344',
+      color: '#4a3d29',
       fontFamily: "'Press Start 2P', monospace",
     }).setOrigin(1, 1)
   }
