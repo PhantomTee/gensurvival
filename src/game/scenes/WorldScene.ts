@@ -419,7 +419,7 @@ export class WorldScene extends Phaser.Scene {
   private tickSurfacingFish(dt: number): void {
     this.fishSurfaceCooldownMs -= dt
     if (this.fishSurfaceCooldownMs > 0) return
-    this.fishSurfaceCooldownMs = 900 + Math.random() * 1600
+    this.fishSurfaceCooldownMs = 500 + Math.random() * 900
 
     // Look for water a short way from the player, so the splash is visible.
     const ptx = Math.floor(this.player.x / TILE_SIZE)
@@ -439,16 +439,28 @@ export class WorldScene extends Phaser.Scene {
     const x = wx * TILE_SIZE + TILE_SIZE / 2
     const y = wy * TILE_SIZE + TILE_SIZE / 2
 
-    const fish = this.add.image(x, y + 3, 'fish').setDepth(2).setScale(0.7).setAlpha(0)
+    // A ring on the surface first — the eye catches the ripple, then the fish.
+    const ripple = this.add.ellipse(x, y + 2, 6, 3, 0xdfefff, 0.85).setDepth(6)
+    this.tweens.add({
+      targets: ripple,
+      scaleX: 3.4, scaleY: 3.4, alpha: 0,
+      duration: 620, ease: 'Quad.easeOut',
+      onComplete: () => ripple.destroy(),
+    })
+
+    const fish = this.add.image(x, y + 4, 'fish')
+      .setDepth(7)          // above the water and its overlays, or it is invisible
+      .setScale(1.25)
+      .setAlpha(1)
+      .setFlipX(Math.random() < 0.5)
     this.tweens.add({
       targets: fish,
-      y: y - 5,
-      alpha: 1,
-      angle: Math.random() < 0.5 ? -25 : 25,
-      duration: 260,
+      y: y - 11,
+      angle: fish.flipX ? 30 : -30,
+      duration: 420,
       ease: 'Quad.easeOut',
       yoyo: true,
-      hold: 90,
+      hold: 200,
       onComplete: () => fish.destroy(),
     })
   }

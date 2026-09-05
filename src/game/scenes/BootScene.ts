@@ -10,16 +10,38 @@ export class BootScene extends Phaser.Scene {
   preload(): void {
     const { width, height } = this.scale
 
-    // ── Loading bar ───────────────────────────────────────────────────────────
+    // ── Loading screen ────────────────────────────────────────────────────────
+    // Earth and moss rather than the default blue-on-black, so the first frame
+    // already belongs to the same world as the game.
+    this.cameras.main.setBackgroundColor(0x1a1206)
+
+    // A soft horizon: dark soil below, lighter loam above.
+    this.add.rectangle(width / 2, height * 0.5, width, height, 0x241a0c)
+    this.add.rectangle(width / 2, height * 0.78, width, height * 0.44, 0x1a1206)
+
     const barW = 300
-    this.add.rectangle(width / 2, height / 2, barW + 4, 20, 0x111111)
+    this.add.rectangle(width / 2, height / 2, barW + 6, 22, 0x0f0a04)
+    this.add.rectangle(width / 2, height / 2, barW + 2, 18, 0x4a3418)
     const fill = this.add
-      .rectangle(width / 2 - barW / 2, height / 2, 0, 16, 0x4488ff)
+      .rectangle(width / 2 - barW / 2, height / 2, 0, 14, 0x6b9c3f)
       .setOrigin(0, 0.5)
+
     this.add
-      .text(width / 2, height / 2 - 28, 'Loading…', { fontSize: '14px', color: '#ffffff' })
+      .text(width / 2, height / 2 - 30, 'GENSURVIVAL', {
+        fontSize: '16px', color: '#9dbf6a', fontStyle: 'bold',
+      })
       .setOrigin(0.5)
-    this.load.on('progress', (v: number) => { fill.width = barW * v })
+    const status = this.add
+      .text(width / 2, height / 2 + 30, 'Turning the soil…', {
+        fontSize: '11px', color: '#7a6242',
+      })
+      .setOrigin(0.5)
+
+    const stages = ['Turning the soil…', 'Seeding the forest…', 'Filling the rivers…', 'Waking the world…']
+    this.load.on('progress', (v: number) => {
+      fill.width = barW * v
+      status.setText(stages[Math.min(stages.length - 1, Math.floor(v * stages.length))])
+    })
 
     // ── Tilesets (raw source — may be 32×32; will be scaled to 16×16 in create) ─
     const tileIds = ['void', 'water', 'sand', 'dirt', 'grass',
@@ -108,6 +130,51 @@ export class BootScene extends Phaser.Scene {
           // Stone reads as a flat blue-grey swatch when tiled over a whole
           // quarry, so give it per-pixel grain and warm it towards the earth
           // tones around it. Deterministic per variant, so no shimmering.
+          // Grass, sand and dirt ship as flat single-colour PNGs, so a tile was
+          // one uniform block and the only variation was a brightness step —
+          // which reads as patches, not ground. Give them grain at the pixel
+          // level: speckle for sand, blades and clumps for grass. Deterministic
+          // per variant, so nothing shimmers as the camera moves.
+          if (id === 'grass' || id === 'sand' || id === 'dirt') {
+            const img = ctx.getImageData(0, 0, 16, 16)
+            const d = img.data
+            const noise = (px: number, py: number, salt: number) => {
+              let n = (Math.imul(px + 1, 374761393) ^ Math.imul(py + 1, 668265263)
+                     ^ Math.imul(v + 1, 2246822519) ^ Math.imul(salt + 1, 3266489917)) >>> 0
+              n = (n ^ (n >>> 13)) >>> 0
+              n = Math.imul(n, 2246822519) >>> 0
+              return (n ^ (n >>> 16)) >>> 0
+            }
+
+            for (let py = 0; py < 16; py++) {
+              for (let px = 0; px < 16; px++) {
+                const i = (py * 16 + px) * 4
+                const grain = noise(px, py, 1)
+
+                if (id === 'sand') {
+                  // Fine wind-blown speckle, with the odd darker grain.
+                  const jitter = ((grain % 15) - 7) * 1.3
+                  const dark = (grain % 97) < 9 ? -14 : 0
+                  const light = (grain % 89) < 5 ? 12 : 0
+                  d[i]     = Math.max(0, Math.min(255, d[i]     + jitter + dark + light + 3))
+                  d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + jitter + dark + light))
+                  d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + jitter + dark - 4))
+                } else {
+                  // Grass and dirt: broader mottling plus short vertical blades,
+                  // so the ground reads as growth rather than a green wall.
+                  const jitter = ((grain % 19) - 9) * 1.5
+                  const bladeSeed = noise(px, Math.floor(py / 3), 7)
+                  const blade = (bladeSeed % 71) < 7 ? (bladeSeed % 2 ? 13 : -12) : 0
+                  const clump = (noise(Math.floor(px / 4), Math.floor(py / 4), 11) % 53) < 8 ? -7 : 0
+                  d[i]     = Math.max(0, Math.min(255, d[i]     + jitter + clump))
+                  d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + jitter + blade + clump))
+                  d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + jitter + clump - 2))
+                }
+              }
+            }
+            ctx.putImageData(img, 0, 0)
+          }
+
           if (id === 'rock' || id === 'iron_ore') {
             const img = ctx.getImageData(0, 0, 16, 16)
             const d = img.data
