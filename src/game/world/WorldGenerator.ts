@@ -73,11 +73,11 @@ function quarryRockTile(tx: number, ty: number): 5 | 6 | 9 | null {
   return 5
 }
 
-// Must equal TREE_HASH_SALT / TREE_HASH_THRESHOLD in
-// contracts/player_registry.py. Changing either side alone makes the contract
-// reject legitimate chops.
+// Tree density. This used to be pinned to the contract, which verified every
+// chop; gathering is client-side now, so it is tuned for feel. 850 (8.5% of
+// walkable tiles) made forests read as a solid wall of trunks.
 const TREE_HASH_SALT = 53
-const TREE_HASH_THRESHOLD = 850
+const TREE_HASH_THRESHOLD = 320   // 3.2% of walkable tiles
 
 /**
  * Tree placement, mirrored bit-for-bit by GenSurvivalGame._tree_exists_at in
@@ -174,14 +174,17 @@ export class WorldGenerator {
           // ── Scattered ground resources ─────────────────────────────────
           // Loose items visible on the ground: sticks, stones, ore chips.
           // These give the world visual richness and are permanent (lifetimeMs=0).
+          // Loose ground resources were on 2% of walkable tiles, so the ground was
+          // carpeted and there was little reason to mine or chop for anything.
+          // Now 0.7%, weighted away from the ores that used to be free.
           const rItem = chainHash(tx, ty, 61)
-          if (rItem < 20) {
+          if (rItem < 8) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'COAL', count: 1 })
-          } else if (rItem < 60) {
+          } else if (rItem < 20) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'IRON_ORE', count: 1 })
-          } else if (rItem < 120) {
+          } else if (rItem < 42) {
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId: 'STONE', count: 1 })
-          } else if (rItem < 200) {
+          } else if (rItem < 70) {
             const itemId = chainHash(tx, ty, 67) < 6500 ? 'WOOD_STICK' : 'WOOD_LOG'
             spawns.push({ type: 'ITEM', tileX: tx, tileY: ty, itemId, count: 1 })
           }

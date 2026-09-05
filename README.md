@@ -91,30 +91,28 @@ reads from the contract, not from Supabase.
 | Off-chain (free, instant) | On-chain (verified, permanent) |
 |---------------------------|--------------------------------|
 | Movement & camera | Player name & profile |
-| Health / energy during play | Inventory, XP and score |
-| Animations & combat state | Terrain and tree verification |
-| Chunk rendering | Mining / chopping / fishing results |
-| | Build tile placements |
-| | House NFTs and their AI grade |
-| | The shared world era |
+| Health / energy during play | Crafted goods, XP and score |
+| Animations & combat state | Build tile placements |
+| Chunk rendering | House NFTs and their AI grade |
+| Gathering & raw materials | The shared world era |
 | | AI event outcomes |
 | | Leaderboard |
 
-Deterministic actions — gathering, placing, salvaging — are queued client-side
-and settled in one `settle_actions` transaction rather than one each. Placing a
-12x12 house was 44 separate transactions and 44 wallet prompts. Verification is
-identical either way: the batch and the single-action methods call the same
-`_apply_*` cores, so they cannot drift.
+**Gathering is deliberately off-chain.** Mining, chopping, fishing and pickups
+happen at frame rate; a transaction per swing bought verification nobody could
+feel while making the game stop every few seconds. Raw materials live in the
+browser.
 
-That leaves exactly four calls that are one transaction each — `refresh_world`,
-`mint_house`, `craft_freeform` and `trigger_world_event` — which are precisely
-the four where an AI decides something. Every wallet prompt in the game marks a
-moment of judgement rather than bookkeeping.
+**Crafted goods are on-chain.** A recipe deducts the inputs the chain actually
+holds — planks, sticks, ingots — and takes the raw ones on the client's word.
+Placing and salvaging build tiles settle too, batched through `settle_actions`,
+because house grading reads placed tiles from contract storage.
 
-The contract derives terrain and tree placement from the same hash the client
-uses, so it verifies gathering rather than trusting the client's word for it.
-Gathering is additionally rate-, distance- and volume-limited, because the world
-is infinite and one-shot-per-coordinate cannot bound farming on its own.
+The trade is explicit: the chain does not police how much wood you have. It
+records what you made from it, grades the house you built, and rules on what
+your improvised crafting produced — the things that carry value. Four calls
+prompt a wallet, and all four are moments where an AI decides something:
+`refresh_world`, `mint_house`, `craft_freeform`, `trigger_world_event`.
 
 ---
 

@@ -4,7 +4,7 @@ const PREFIX = 'gensurvival_world_'
 // were restored on top of the NEW terrain - the player spawned by the new
 // world's rules and then stood in the old world's rock, wedged and unable to
 // move. Any change to WorldGenerator must bump this.
-const WORLD_SAVE_VERSION = 6
+const WORLD_SAVE_VERSION = 7
 
 export interface WorldSave {
   version?: number

@@ -136,34 +136,13 @@ function App() {
     configureQueue(() => useGameStore.getState().walletAddress)
     const removeUnloadFlush = installUnloadFlush()
 
-    const handleMineTile = ((e: CustomEvent) => {
-      const { x, y, terrainType } = e.detail as { x: number; y: number; terrainType: string }
-      enqueue({ kind: 'mine', x, y, terrain: terrainType })
-    }) as EventListener
-
-    const handleChopTree = ((e: CustomEvent) => {
-      const { x, y } = e.detail as { x: number; y: number }
-      enqueue({ kind: 'chop', x, y })
-    }) as EventListener
-
+    // Gathering is client-side now — mining, chopping, fishing and pickups all
+    // resolve in the browser at frame rate and never reach the chain. Only
+    // building placement and salvage still settle, because house grading reads
+    // placed tiles from contract storage.
     const handlePlaceBuild = ((e: CustomEvent) => {
       const { x, y, itemId } = e.detail as { x: number; y: number; itemId: string }
       enqueue({ kind: 'place', x, y, item: itemId })
-    }) as EventListener
-
-    const handleFishAction = ((e: CustomEvent) => {
-      const { x, y } = e.detail as { x: number; y: number }
-      enqueue({ kind: 'fish', x, y })
-    }) as EventListener
-
-    const handleGroundItem = ((e: CustomEvent) => {
-      const { x, y } = e.detail as { x: number; y: number }
-      enqueue({ kind: 'ground', x, y })
-    }) as EventListener
-
-    const handleCatchChicken = ((e: CustomEvent) => {
-      const { x, y } = e.detail as { x: number; y: number }
-      enqueue({ kind: 'chicken', x, y })
     }) as EventListener
 
     const handleBreakTile = ((e: CustomEvent) => {
@@ -171,21 +150,11 @@ function App() {
       enqueue({ kind: 'break', x, y })
     }) as EventListener
 
-    window.addEventListener('gensurvival:mineTile', handleMineTile)
-    window.addEventListener('gensurvival:chopTree', handleChopTree)
     window.addEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
-    window.addEventListener('gensurvival:fishAction', handleFishAction)
-    window.addEventListener('gensurvival:claimGroundItem', handleGroundItem)
-    window.addEventListener('gensurvival:catchChicken', handleCatchChicken)
     window.addEventListener('gensurvival:breakBuildTile', handleBreakTile)
 
     return () => {
-      window.removeEventListener('gensurvival:mineTile', handleMineTile)
-      window.removeEventListener('gensurvival:chopTree', handleChopTree)
       window.removeEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
-      window.removeEventListener('gensurvival:fishAction', handleFishAction)
-      window.removeEventListener('gensurvival:claimGroundItem', handleGroundItem)
-      window.removeEventListener('gensurvival:catchChicken', handleCatchChicken)
       window.removeEventListener('gensurvival:breakBuildTile', handleBreakTile)
       removeUnloadFlush()
     }

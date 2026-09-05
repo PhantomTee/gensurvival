@@ -17,7 +17,7 @@ import Phaser from 'phaser'
 export function pickRendererType(): number {
   if (typeof document === 'undefined') return Phaser.CANVAS
 
-  let gl: WebGLRenderingContext | null = null
+  let gl: WebGLRenderingContext | null
   try {
     const probe = document.createElement('canvas')
     probe.width = 2

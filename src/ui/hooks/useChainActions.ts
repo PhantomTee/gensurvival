@@ -17,20 +17,12 @@ import { useGameStore } from '../store'
 import { createWriteClient } from '../../chain/client'
 import { flush } from '../../chain/actionQueue'
 import {
-  chopTree,
-  claimGroundItem,
-  catchChicken,
-  breakBuildTile,
   craftItem,
-  fishTile,
-  mineTile,
   mintHouse,
   getHouse,
   craftFreeform,
   refreshWorld,
-  placeBuildTile,
   triggerWorldEvent,
-  updateProfile,
   type ActionDelta,
 } from '../../chain/contracts'
 import type { StationType } from '../../game/registry/RECIPES'

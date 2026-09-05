@@ -59,6 +59,9 @@ export function EpochTimer() {
               {worldEra.scarce_item.replace(/_/g, ' ').toLowerCase()} is scarce
             </div>
           )}
+          <div className="text-gray-600 text-[9px] font-mono mt-1 leading-tight">
+            Everyone plays this world. Written from today's real news.
+          </div>
         </div>
       )}
 
@@ -66,16 +69,20 @@ export function EpochTimer() {
       {eraIsStale && !txPending && (
         <button
           onClick={doRefreshWorld}
+          title="Reads today's real headlines and writes the world every player shares"
           className="px-3 py-1 rounded border border-amber-600 text-amber-300 bg-amber-900/30
-                     hover:bg-amber-800/50 font-mono text-xs cursor-pointer">
-            READ TODAY'S WORLD
+                     hover:bg-amber-800/50 font-mono text-xs cursor-pointer text-right">
+          <div>WRITE TODAY&apos;S WORLD</div>
+          <div className="text-[9px] text-amber-500/80 normal-case">
+            nobody has yet — from real news
+          </div>
         </button>
       )}
 
       {/* Epoch status */}
       <div className="bg-gray-900 border border-gray-700 rounded px-3 py-1 text-right">
         <div className="text-gray-400 text-xs font-mono">
-          {inWin ? '🟢 SUBMIT WINDOW OPEN' : '⏳ Next window in'}
+          {inWin ? '🟢 THE WORLD IS STIRRING' : '⏳ Quiet until'}
         </div>
         {!inWin && (
           <div className="text-blue-300 text-sm font-mono font-bold">
@@ -83,7 +90,7 @@ export function EpochTimer() {
           </div>
         )}
         <div className="text-gray-500 text-xs font-mono">
-          Calls today: {calls}/4
+          Fates today: {calls}/4
         </div>
       </div>
 
@@ -92,13 +99,18 @@ export function EpochTimer() {
         <button
           disabled={!canCall}
           onClick={doSubmitEvent}
+          title="An AI reads today's headlines and your situation, then decides what happens to you"
           className={`px-4 py-2 rounded border font-mono font-bold text-sm transition-all
             ${canCall
               ? 'border-green-500 text-green-300 bg-green-900/40 hover:bg-green-800/60 animate-pulse cursor-pointer'
               : calls >= 4
                 ? 'border-gray-600 text-gray-500 bg-gray-900 cursor-not-allowed'
                 : 'border-yellow-600 text-yellow-400 bg-yellow-900/30 cursor-not-allowed'}`}>
-          {calls >= 4 ? 'LIMIT REACHED' : txPending ? '⟳ SUBMITTING…' : '⚡ SUBMIT STATS'}
+          {calls >= 4
+            ? 'NO FATES LEFT TODAY'
+            : txPending
+              ? '⟳ THE WORLD DECIDES…'
+              : '⚡ SEEK YOUR FATE'}
         </button>
       )}
 

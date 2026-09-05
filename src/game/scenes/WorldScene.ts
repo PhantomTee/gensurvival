@@ -376,6 +376,28 @@ export class WorldScene extends Phaser.Scene {
    * ChunkManager.evict existed but was never called, so every chunk generated
    * in a session stayed in memory for the whole session.
    */
+  /**
+   * Grant a gathered resource straight into the player's inventory.
+   *
+   * Gathering is client-side: it happens at frame rate and a transaction per
+   * swing made the game stop every few seconds. The shared world era still
+   * matters here — its bountiful resource pays an extra unit, exactly as the
+   * contract used to do it — so a world authored from the news still changes
+   * what the ground gives you.
+   */
+  private grantGathered(itemId: ItemId, count: number, label?: string): void {
+    const era = useGameStore.getState().worldEra
+    const bonus = era && era.bountiful_item === itemId ? 1 : 0
+    const total = count + bonus
+
+    const inv = this.player.components.inventory!
+    addItem(inv, itemId, total)
+    this.syncReactStore()
+
+    const name = label ?? ITEMS[itemId]?.displayName ?? String(itemId).replace(/_/g, ' ')
+    this.showHint(bonus > 0 ? `+${total} ${name}  (${era!.era_name})` : `+${total} ${name}`, '#88ff88')
+  }
+
   private evictDistantChunks(): void {
     const cx = Math.floor(this.player.x / (CHUNK_SIZE * TILE_SIZE))
     const cy = Math.floor(this.player.y / (CHUNK_SIZE * TILE_SIZE))
@@ -754,10 +776,13 @@ export class WorldScene extends Phaser.Scene {
         this.showHint('Connect wallet to mine on-chain')
         return
       }
-      // Drain energy for on-chain mining dispatch
       const enMine = this.player.components.energy!
       enMine.value = Math.max(0, enMine.value - 0.30)
-      window.dispatchEvent(new CustomEvent('gensurvival:mineTile', { detail: { x: tx, y: ty, terrainType: tileId } }))
+      const mineDrop = TILES[tileId].dropItem
+      if (mineDrop) {
+        this.tilemap.breakTile(tx, ty)
+        this.grantGathered(mineDrop as ItemId, 1)
+      }
       return
     }
 
@@ -810,14 +835,8 @@ export class WorldScene extends Phaser.Scene {
         if (d < nearestDist) { nearestDist = d; nearestChicken = chicken }
       }
       if (nearestChicken) {
-        // The contract verifies the chicken against the world hash and grants
-        // the meat; granting locally would drift from the chain inventory that
-        // crafting spends.
-        const ctx = Math.floor(nearestChicken.x / TILE_SIZE)
-        const cty = Math.floor(nearestChicken.y / TILE_SIZE)
         nearestChicken.destroy()
-        window.dispatchEvent(new CustomEvent('gensurvival:catchChicken', { detail: { x: ctx, y: cty } }))
-        this.showHint('Catching chicken...', '#ffdd88')
+        this.grantGathered('RAW_MEAT' as ItemId, Math.random() < 0.7 ? 1 : 2, 'raw meat')
         return
       }
     }
@@ -833,17 +852,11 @@ export class WorldScene extends Phaser.Scene {
     if (closest) {
       const ie = closest.components.itemEntity!
       const isPermanent = ie.lifetimeMs === 0   // world-gen ground item
-      const inv = this.player.components.inventory!
-
       // Read position BEFORE destroying the sprite (sprite.x/y are unavailable after destroy)
       const rx = closest.x
       const ry = closest.y
 
-      // The chain grants the item — it derives what lies here from the same
-      // per-coordinate hash the world generator used.
-      window.dispatchEvent(new CustomEvent('gensurvival:claimGroundItem', {
-        detail: { x: Math.floor(rx / TILE_SIZE), y: Math.floor(ry / TILE_SIZE) },
-      }))
+      this.grantGathered(ie.itemId as ItemId, ie.count)
 
       closest.destroy()
 
@@ -940,12 +953,9 @@ export class WorldScene extends Phaser.Scene {
         const tid = TILE_BY_INDEX[this.chunks.getTileIndex(ftx, fty)]
         if (tid === 'WATER') {
           this.fishingCooldownMs = 8000
-          if (!useGameStore.getState().walletAddress) {
-            this.showHint('Connect wallet to fish on-chain')
-            return
-          }
-          this.showHint('Casting line...', '#88ccff')
-          window.dispatchEvent(new CustomEvent('gensurvival:fishAction', { detail: { x: ftx, y: fty } }))
+          const catchRoll = Math.random()
+          const caught = catchRoll < 0.6 ? 'FISH' : catchRoll < 0.8 ? 'WOOD_STICK' : 'STONE'
+          this.grantGathered(caught as ItemId, 1)
           return
         }
       }
@@ -1043,16 +1053,7 @@ export class WorldScene extends Phaser.Scene {
 
       switch (e.type) {
         case 'TREE':
-          if (useGameStore.getState().walletAddress) {
-            window.dispatchEvent(new CustomEvent('gensurvival:chopTree', {
-              detail: {
-                x: Math.floor(e.x / TILE_SIZE),
-                y: Math.floor(e.y / TILE_SIZE),
-              },
-            }))
-          } else {
-            this.showHint('Connect wallet to chop trees on-chain')
-          }
+          this.grantGathered('WOOD_LOG' as ItemId, 3)
           // Queue respawn at the same position after 3 minutes
           this.treeRespawnQueue.push({ x: e.x, y: e.y, timerMs: 180_000 })
           break
