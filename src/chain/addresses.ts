@@ -7,5 +7,5 @@
  * discarded. One contract generates and applies the event in one transaction.
  */
 export const ADDRESSES = {
-  PLAYER_REGISTRY: '0x5613649C8C8FE4460e3C3B5888d9014375a5182C',
+  PLAYER_REGISTRY: '0x3347cFA181a571d57E59C83AcBc8Ff4599D832d9',
 } as const

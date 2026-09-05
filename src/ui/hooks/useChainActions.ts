@@ -17,6 +17,9 @@ import { useGameStore } from '../store'
 import { createWriteClient } from '../../chain/client'
 import {
   chopTree,
+  claimGroundItem,
+  catchChicken,
+  breakBuildTile,
   craftItem,
   fishTile,
   mineTile,
@@ -195,6 +198,49 @@ export function useChainActions() {
     }
   }, [])
 
+  // ── Chain-backed pickups ─────────────────────────────────────────────────
+  // These were local-only grants, so the visible inventory drifted from the
+  // chain inventory that crafting spends. Each is verified against the world
+  // hash contract-side, so the client cannot invent them.
+  const doClaimGroundItem = useCallback(async (x: number, y: number) => {
+    const store = useGameStore.getState()
+    if (!store.walletAddress) return null
+    try {
+      const delta = await claimGroundItem(createWriteClient(store.walletAddress), x, y)
+      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
+      return delta
+    } catch (err: unknown) {
+      toast.error(`Pickup failed: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
+  }, [])
+
+  const doCatchChicken = useCallback(async (x: number, y: number) => {
+    const store = useGameStore.getState()
+    if (!store.walletAddress) return null
+    try {
+      const delta = await catchChicken(createWriteClient(store.walletAddress), x, y)
+      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
+      return delta
+    } catch (err: unknown) {
+      toast.error(`Catch failed: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
+  }, [])
+
+  const doBreakBuildTile = useCallback(async (x: number, y: number) => {
+    const store = useGameStore.getState()
+    if (!store.walletAddress) return null
+    try {
+      const delta = await breakBuildTile(createWriteClient(store.walletAddress), x, y)
+      window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta }))
+      return delta
+    } catch (err: unknown) {
+      toast.error(`Salvage failed: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
+  }, [])
+
   // ── doCraftFreeform ──────────────────────────────────────────────────────
   // The open counterpart to doCraft: instead of looking up a fixed recipe, the
   // contract's LLM rules on what the materials plausibly make. Materials are
@@ -341,7 +387,7 @@ export function useChainActions() {
 
   // Stable object — only created once because all callbacks have [] deps
   return useMemo(
-    () => ({ doCraft, doCraftFreeform, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile }),
-    [doCraft, doCraftFreeform, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile],
+    () => ({ doCraft, doCraftFreeform, doClaimGroundItem, doCatchChicken, doBreakBuildTile, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile }),
+    [doCraft, doCraftFreeform, doClaimGroundItem, doCatchChicken, doBreakBuildTile, doMineTile, doChopTree, doPlaceBuildTile, doMintHouse, doRefreshWorld, doSubmitEvent, doFishTile],
   )
 }

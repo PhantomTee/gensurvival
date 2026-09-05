@@ -103,6 +103,8 @@ export class WorldScene extends Phaser.Scene {
   private spawnedChunks = new Set<string>()
   private lastEntityChunkX = Number.NaN
   private lastEntityChunkY = Number.NaN
+  private lastEvictChunkX = Number.NaN
+  private lastEvictChunkY = Number.NaN
 
   // E key for eating
   private keyE!: Phaser.Input.Keyboard.Key
@@ -161,19 +163,32 @@ export class WorldScene extends Phaser.Scene {
     const roughSpawnCX = Math.floor(roughSpawn.x / (CHUNK_SIZE * TILE_SIZE))
     const roughSpawnCY = Math.floor(roughSpawn.y / (CHUNK_SIZE * TILE_SIZE))
     this.chunks.preload(roughSpawnCX, roughSpawnCY, 3)
-    const spawn = this.findClearSpawnNear(roughTX, roughTY)
 
     // ── Restore saved world tiles ─────────────────────────────────
+    // Restore BEFORE picking a spawn: saved chunks overwrite generated tiles,
+    // so a spawn chosen first could be searched against terrain that no longer
+    // exists by the time the player stands on it.
     const savedWorld = loadWorld(store.walletAddress)
     if (savedWorld) this.chunks.restore(savedWorld.chunks)
+
+    const spawn = this.findClearSpawnNear(roughTX, roughTY)
 
     // ── Player ───────────────────────────────────────────────────
     const savedPlayer = savedWorld ? loadPlayer(store.walletAddress) : null
     const savedTileX = savedPlayer ? Math.floor(savedPlayer.x / TILE_SIZE) : 0
     const savedTileY = savedPlayer ? Math.floor(savedPlayer.y / TILE_SIZE) : 0
     const savedIsClear = savedPlayer ? this.isClearSpawnTile(savedTileX, savedTileY) : false
-    const px = savedPlayer && savedIsClear ? savedPlayer.x : spawn.x
-    const py = savedPlayer && savedIsClear ? savedPlayer.y : spawn.y
+    let px = savedPlayer && savedIsClear ? savedPlayer.x : spawn.x
+    let py = savedPlayer && savedIsClear ? savedPlayer.y : spawn.y
+
+    // Last line of defence: never start the player inside solid tiles. Every
+    // path above is meant to guarantee this, but being wedged with no way to
+    // move is unrecoverable for the player, so verify rather than assume.
+    if (!this.isClearSpawnTile(Math.floor(px / TILE_SIZE), Math.floor(py / TILE_SIZE))) {
+      const rescued = this.findClearSpawnNear(Math.floor(px / TILE_SIZE), Math.floor(py / TILE_SIZE))
+      px = rescued.x
+      py = rescued.y
+    }
 
     this.player   = createPlayer(this, px, py, this.em)
     this.playerId = this.player.id
@@ -355,6 +370,23 @@ export class WorldScene extends Phaser.Scene {
 
   // ─── Chunk entity spawning ─────────────────────────────────────────────────
 
+  /**
+   * Drop chunk data far from the player.
+   *
+   * ChunkManager.evict existed but was never called, so every chunk generated
+   * in a session stayed in memory for the whole session.
+   */
+  private evictDistantChunks(): void {
+    const cx = Math.floor(this.player.x / (CHUNK_SIZE * TILE_SIZE))
+    const cy = Math.floor(this.player.y / (CHUNK_SIZE * TILE_SIZE))
+    if (cx === this.lastEvictChunkX && cy === this.lastEvictChunkY) return
+    this.lastEvictChunkX = cx
+    this.lastEvictChunkY = cy
+    // Keep well beyond what is rendered and entity-populated, so eviction can
+    // never take a chunk that is about to be drawn.
+    this.chunks.evict(cx, cy, ENTITY_SPAWN_RADIUS + 4)
+  }
+
   /** Spawns entities for any chunk the player has come near but not yet loaded. */
   private streamChunkEntities(): void {
     const cx = Math.floor(this.player.x / (CHUNK_SIZE * TILE_SIZE))
@@ -379,7 +411,19 @@ export class WorldScene extends Phaser.Scene {
           const spx = spawn.tileX * TILE_SIZE + TILE_SIZE / 2
           const spy = spawn.tileY * TILE_SIZE + TILE_SIZE / 2
           switch (spawn.type) {
-            case 'ZOMBIE':  createZombie(this, spx, spy, this.em); break
+            case 'ZOMBIE': {
+              // The shared era's danger_level is the whole point of a world
+              // authored from the news — it has to be felt, not just displayed.
+              // Level 1 halves zombie density, level 5 doubles it; the extra
+              // spawns are offset so they never stack on the same tile.
+              const danger = useGameStore.getState().worldEra?.danger_level ?? 2
+              if (danger >= 2 || (spawn.tileX + spawn.tileY) % 2 === 0) {
+                createZombie(this, spx, spy, this.em)
+              }
+              if (danger >= 4) createZombie(this, spx + TILE_SIZE, spy, this.em)
+              if (danger >= 5) createZombie(this, spx, spy + TILE_SIZE, this.em)
+              break
+            }
             case 'CHICKEN': createChicken(this, spx, spy, this.em); break
             case 'DOG':     createDog(this, spx, spy, this.em); break
 
@@ -455,6 +499,7 @@ export class WorldScene extends Phaser.Scene {
     // zombies and ground items existed only in the 7x7 chunks around spawn and
     // the rest of the world was permanently empty.
     this.streamChunkEntities()
+    this.evictDistantChunks()
 
     // ── Tree respawn countdown ───────────────────────────────────────────────
     this.tickTreeRespawn(dt)
@@ -719,8 +764,9 @@ export class WorldScene extends Phaser.Scene {
     // Non-hard breakable tiles (WOOD_WALL, WOOD_FLOOR) — local break, player receives drop
     const drop = this.tilemap.breakTile(tx, ty)
     if (drop) {
-      const inv = this.player.components.inventory!
-      addItem(inv, drop as ItemId, 1)
+      // Salvage is settled on-chain, which also clears the tile from
+      // build_tiles — otherwise a broken wall still counted towards a house.
+      window.dispatchEvent(new CustomEvent('gensurvival:breakBuildTile', { detail: { x: tx, y: ty } }))
       this.spawnItemDrop(drop as ItemId, tx * TILE_SIZE + TILE_SIZE / 2, ty * TILE_SIZE + TILE_SIZE / 2, 1, false)
       this.showHint(`+1 ${drop.replace(/_/g, ' ')}`, '#88ff88')
       // Drain energy for breaking soft tiles
@@ -764,12 +810,14 @@ export class WorldScene extends Phaser.Scene {
         if (d < nearestDist) { nearestDist = d; nearestChicken = chicken }
       }
       if (nearestChicken) {
-        const inv = this.player.components.inventory!
-        const meat = Math.random() < 0.7 ? 1 : 2
-        addItem(inv, 'RAW_MEAT' as ItemId, meat)
+        // The contract verifies the chicken against the world hash and grants
+        // the meat; granting locally would drift from the chain inventory that
+        // crafting spends.
+        const ctx = Math.floor(nearestChicken.x / TILE_SIZE)
+        const cty = Math.floor(nearestChicken.y / TILE_SIZE)
         nearestChicken.destroy()
-        this.showHint(`Caught a chicken  +${meat} raw meat`, '#ffdd88')
-        this.syncReactStore()
+        window.dispatchEvent(new CustomEvent('gensurvival:catchChicken', { detail: { x: ctx, y: cty } }))
+        this.showHint('Catching chicken...', '#ffdd88')
         return
       }
     }
@@ -787,12 +835,15 @@ export class WorldScene extends Phaser.Scene {
       const isPermanent = ie.lifetimeMs === 0   // world-gen ground item
       const inv = this.player.components.inventory!
 
-      // ── Add item to inventory BEFORE destroying sprite ──────────────────────
-      addItem(inv, ie.itemId as ItemId, ie.count)
-
       // Read position BEFORE destroying the sprite (sprite.x/y are unavailable after destroy)
       const rx = closest.x
       const ry = closest.y
+
+      // The chain grants the item — it derives what lies here from the same
+      // per-coordinate hash the world generator used.
+      window.dispatchEvent(new CustomEvent('gensurvival:claimGroundItem', {
+        detail: { x: Math.floor(rx / TILE_SIZE), y: Math.floor(ry / TILE_SIZE) },
+      }))
 
       closest.destroy()
 

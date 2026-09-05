@@ -3,6 +3,17 @@ import { ADDRESSES } from './addresses'
 import type { LeaderboardEntry } from '../ui/store'
 import type { StationType } from '../game/registry/RECIPES'
 
+/**
+ * The contract keys everything by lowercase address. Wallets are inconsistent
+ * about case, so normalise here too rather than relying on which RPC method
+ * happened to supply the address.
+ */
+function normaliseAddressArgs(args: unknown[]): unknown[] {
+  return args.map((a) =>
+    typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a) ? a.toLowerCase() : a,
+  )
+}
+
 async function readContract<T>(
   address: string,
   fn: string,
@@ -13,7 +24,7 @@ async function readContract<T>(
   const result = await (readClient as any).readContract({
     address: address as `0x${string}`,
     functionName: fn,
-    args,
+    args: normaliseAddressArgs(args),
     stateStatus: 'accepted', // read accepted state — no need to wait for finalization
   })
   return result as T
@@ -248,6 +259,21 @@ export async function getHouse(tokenId: number): Promise<HouseMeta | null> {
     const raw = await readContract<string>(ADDRESSES.PLAYER_REGISTRY, 'get_house', [tokenId])
     return raw ? (JSON.parse(raw) as HouseMeta) : null
   } catch { return null }
+}
+
+export async function claimGroundItem(client: GenLayerClient, x: number, y: number): Promise<ActionDelta> {
+  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'claim_ground_item', [x, y]) as string
+  return JSON.parse(raw) as ActionDelta
+}
+
+export async function catchChicken(client: GenLayerClient, x: number, y: number): Promise<ActionDelta> {
+  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'catch_chicken', [x, y]) as string
+  return JSON.parse(raw) as ActionDelta
+}
+
+export async function breakBuildTile(client: GenLayerClient, x: number, y: number): Promise<ActionDelta> {
+  const raw = await writeContract(client, ADDRESSES.PLAYER_REGISTRY, 'break_build_tile', [x, y]) as string
+  return JSON.parse(raw) as ActionDelta
 }
 
 export async function getHousesOf(address: string): Promise<number[]> {

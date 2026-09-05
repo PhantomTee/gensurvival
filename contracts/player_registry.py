@@ -168,6 +168,18 @@ MAX_EVENT_XP_DELTA   = 40
 # eventually stop returning.
 LEADERBOARD_SIZE    = 100
 
+# Ground items and animals are placed by per-coordinate hashes, exactly as
+# WorldGenerator.generateChunk does it, so the contract can verify a pickup
+# instead of taking the client's word. Client spawns are a subset of these
+# (the client also requires walkable land), so nothing legitimate is rejected.
+ENTITY_HASH_SALT     = 59
+ITEM_HASH_SALT       = 61
+ITEM_KIND_SALT       = 67
+CHICKEN_BAND_MIN     = 10000 // 60                        # after flowers
+CHICKEN_BAND_MAX     = CHICKEN_BAND_MIN + 10000 // 200
+CHICKEN_MEAT_MIN     = 1
+CHICKEN_MEAT_MAX     = 2
+
 TREE_HASH_SALT      = 53
 TREE_HASH_THRESHOLD = 850    # 8.5 % of coordinates carry a tree
 
@@ -226,6 +238,22 @@ class GenSurvivalGame(gl.Contract):
         if text.startswith("```"):
             text = text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
+
+    def _caller(self) -> str:
+        """The caller's address as a storage key, always lowercase.
+
+        gl.message.sender_address.as_hex returns the checksummed form, and every
+        key and lookup used it raw. Wallets are not consistent about case -
+        eth_requestAccounts and eth_accounts can disagree - so a player who
+        registered via one and was looked up via the other read as unregistered
+        and was asked to register again. Normalising at both ends removes the
+        whole class of bug.
+        """
+        return gl.message.sender_address.as_hex.lower()
+
+    def _key(self, address: str) -> str:
+        """Normalise a caller-supplied address for lookup."""
+        return str(address).lower()
 
     def _epoch(self, ts: int) -> int:
         return ts // EPOCH_DURATION
@@ -482,6 +510,31 @@ class GenSurvivalGame(gl.Contract):
     def _require_registered(self, addr_hex: str) -> None:
         assert addr_hex in self.players, "Not registered"
 
+    def _ground_item_at(self, x: int, y: int) -> tuple:
+        """The loose item lying at a coordinate, mirroring the client exactly.
+
+        Returns (item_id, count), or ("", 0) when the ground is bare.
+        """
+        roll = self._hash(0, int(x), int(y), ITEM_HASH_SALT)
+        if roll < 20:
+            return ("COAL", 1)
+        if roll < 60:
+            return ("IRON_ORE", 1)
+        if roll < 120:
+            return ("STONE", 1)
+        if roll < 200:
+            if self._hash(0, int(x), int(y), ITEM_KIND_SALT) < 6500:
+                return ("WOOD_STICK", 1)
+            return ("WOOD_LOG", 1)
+        return ("", 0)
+
+    def _chicken_at(self, x: int, y: int) -> bool:
+        """True when a chicken stands at this coordinate."""
+        if self._tree_exists_at(int(x), int(y)):
+            return False        # trees win the tile, same as the client
+        band = self._hash(0, int(x), int(y), ENTITY_HASH_SALT)
+        return CHICKEN_BAND_MIN <= band < CHICKEN_BAND_MAX
+
     def _tree_exists_at(self, x: int, y: int) -> bool:
         """Per-coordinate tree placement - mirrored exactly by the client."""
         return self._hash(0, int(x), int(y), TREE_HASH_SALT) < TREE_HASH_THRESHOLD
@@ -527,7 +580,7 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def register(self, player_name: str) -> None:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         assert len(player_name) > 0, "Player name cannot be empty"
         assert addr_hex not in self.players, "Already registered"
 
@@ -548,7 +601,7 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def update_profile(self, profile_json: str) -> None:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         assert len(profile_json) > 0, "Profile JSON cannot be empty"
 
@@ -573,7 +626,7 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def record_survival_day(self, day_number: int) -> str:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
 
         # A game day is one real 24 h cycle (see DAY_STAGES in the client), so
@@ -598,7 +651,7 @@ class GenSurvivalGame(gl.Contract):
         # signature only for ABI compatibility and must agree with what we
         # compute. Rock/ore placement is identical here and in the client's
         # chainRockTile().
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.mined_tiles, "Tile already mined"
@@ -626,7 +679,7 @@ class GenSurvivalGame(gl.Contract):
         # Tree placement is a per-coordinate hash, so the contract can verify a
         # tree is really there. The client uses the same rule, restricted to
         # walkable land - client trees are a subset of contract-valid ones.
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         key = self._coord_key(addr_hex, int(x), int(y))
         assert key not in self.chopped_trees, "Tree already chopped"
@@ -644,7 +697,7 @@ class GenSurvivalGame(gl.Contract):
 
     @gl.public.write
     def fish_tile(self, x: int, y: int) -> str:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
 
         neighbors = [(int(x)-1, int(y)), (int(x)+1, int(y)), (int(x), int(y)-1), (int(x), int(y)+1)]
@@ -663,11 +716,89 @@ class GenSurvivalGame(gl.Contract):
 
         return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"], "xp": state["xp"], "score": state["score"]}, sort_keys=True)
 
+    @gl.public.write
+    def claim_ground_item(self, x: int, y: int) -> str:
+        """Pick up a loose item, verified against the world hash.
+
+        Ground pickups used to be granted client-side only, so the visible
+        inventory drifted from the chain inventory that crafting actually
+        spends - the UI said you had the wood and the transaction said you did
+        not, and a reload silently erased the difference.
+        """
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        key = "gi:" + self._coord_key(addr_hex, int(x), int(y))
+        assert key not in self.mined_tiles, "Already picked up"
+
+        item_id, count = self._ground_item_at(int(x), int(y))
+        assert count > 0, "Nothing on the ground here"
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+
+        state = self._get_state(addr_hex)
+        grant = {item_id: count + self._era_bonus(item_id)}
+        self._grant_items(state, grant)
+        self.mined_tiles[key] = True
+        self._save_state(addr_hex, state)
+
+        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def catch_chicken(self, x: int, y: int) -> str:
+        """Catch a chicken for meat, verified against the world hash."""
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        key = "ch:" + self._coord_key(addr_hex, int(x), int(y))
+        assert key not in self.mined_tiles, "That chicken is already caught"
+        assert self._chicken_at(int(x), int(y)), "No chicken here"
+        self._assert_and_record_gather(addr_hex, int(x), int(y))
+
+        # Deterministic yield: the client cannot reroll for the better outcome.
+        meat = CHICKEN_MEAT_MAX if self._hash(0, int(x), int(y), 83) > 7000 else CHICKEN_MEAT_MIN
+        state = self._get_state(addr_hex)
+        grant = {"RAW_MEAT": meat}
+        self._grant_items(state, grant)
+        state["xp"] = int(state.get("xp", 0)) + 1
+        self.mined_tiles[key] = True
+        self._save_state(addr_hex, state)
+
+        return json.dumps({"deduct": {}, "grant": grant, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
+    @gl.public.write
+    def break_build_tile(self, x: int, y: int) -> str:
+        """Reclaim a tile you placed, and clear it from on-chain state.
+
+        Breaking a wall only ever happened client-side, so build_tiles kept the
+        wall forever: a player could place a house, break every wall to recover
+        the planks, and still satisfy _is_house_shape when minting.
+        """
+        addr_hex = self._caller()
+        self._require_registered(addr_hex)
+        key = self._coord_key(addr_hex, int(x), int(y))
+        assert key in self.build_tiles, "Nothing of yours placed here"
+
+        tile = self.build_tiles[key]
+        refund = {}
+        for item_id, placed in PLACEABLE_ITEMS.items():
+            if placed["tile"] == tile:
+                refund = {item_id: 1}
+                break
+        assert len(refund) > 0, "That tile cannot be reclaimed"
+
+        state = self._get_state(addr_hex)
+        self._grant_items(state, refund)
+        self.build_tiles[key] = ""
+        self._save_state(addr_hex, state)
+
+        return json.dumps({"deduct": {}, "grant": refund, "inventory": state["inventory"],
+                           "xp": state["xp"], "score": state["score"]}, sort_keys=True)
+
     # ── Crafting ──────────────────────────────────────────────────────────────
 
     @gl.public.write
     def craft(self, recipe_id: str, at_station: str, quantity: int, station_x: int, station_y: int) -> str:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         assert recipe_id in RECIPES, "Unknown recipe"
         assert 1 <= int(quantity) <= 64, "Quantity must be 1-64"
@@ -700,7 +831,7 @@ class GenSurvivalGame(gl.Contract):
         rules on what comes out, bounded by FREEFORM_OUTPUTS so the result is
         always something the game can actually render and use.
         """
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         assert len(intent) <= 200, "Intent must be at most 200 chars"
 
@@ -789,12 +920,15 @@ Return ONLY valid JSON:
 
     @gl.public.write
     def place_build_tile(self, x: int, y: int, item_id: str) -> str:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         assert item_id in PLACEABLE_ITEMS, "Item cannot be placed"
 
         key = self._coord_key(addr_hex, int(x), int(y))
-        assert key not in self.build_tiles, "Coordinate already occupied"
+        # A broken tile leaves an empty marker rather than a missing key, so
+        # rebuilding on the same spot has to be allowed explicitly.
+        occupied = key in self.build_tiles and self.build_tiles[key] != ""
+        assert not occupied, "Coordinate already occupied"
 
         state  = self._get_state(addr_hex)
         deduct = self._deduct_items(state, {item_id: 1}, 1)
@@ -845,7 +979,7 @@ Return ONLY valid JSON:
         for ix in range(x, x + width):
             top    = self._coord_key(addr_hex, ix, y)
             bottom = self._coord_key(addr_hex, ix, y + height - 1)
-            if top    not in self.build_tiles or self.build_tiles[top]    != "WOOD_WALL":
+            if top    not in self.build_tiles or self.build_tiles[top]    != "WOOD_WALL":  # "" once broken
                 return False
             if bottom not in self.build_tiles or self.build_tiles[bottom] != "WOOD_WALL":
                 return False
@@ -866,7 +1000,7 @@ Return ONLY valid JSON:
 
     @gl.public.write
     def mint_house(self, x: int, y: int, width: int, height: int, name: str, description: str) -> u256:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         assert self._is_house_shape(addr_hex, int(x), int(y), int(width), int(height)), "No complete on-chain house at coordinates"
         assert self._house_not_claimed(addr_hex, int(x), int(y), int(width), int(height)), "House footprint already minted"
@@ -982,7 +1116,7 @@ Return ONLY valid JSON:
         surviving in the same world, and no single client can be trusted to
         decide what that world is.
         """
-        self._require_registered(gl.message.sender_address.as_hex)
+        self._require_registered(self._caller())
         now = self._now()
         epoch = self._epoch(now)
 
@@ -1066,7 +1200,7 @@ The era must follow plausibly from the supplied headlines.
             "scarce_item":    scarce,
             "headline_basis": str(parsed.get("headline_basis", ""))[:240],
             "written_at":     now,
-            "written_by":     gl.message.sender_address.as_hex,
+            "written_by":     self._caller(),
         }
         self.world_era["current"] = json.dumps(era, sort_keys=True)
         return self.world_era["current"]
@@ -1077,7 +1211,7 @@ The era must follow plausibly from the supplied headlines.
 
     @gl.public.write
     def trigger_world_event(self) -> str:
-        addr_hex = gl.message.sender_address.as_hex
+        addr_hex = self._caller()
         self._require_registered(addr_hex)
         now = self._now()
 
@@ -1272,10 +1406,12 @@ The event must follow from the headlines and the player's state.
 
     @gl.public.view
     def get_last_event(self, address: str) -> str:
+        address = self._key(address)
         return self.last_event[address] if address in self.last_event else ""
 
     @gl.public.view
     def get_call_count_today(self, address: str) -> int:
+        address = self._key(address)
         return self._calls_in_day(address, self._now())
 
     @gl.public.view
@@ -1298,14 +1434,17 @@ The event must follow from the headlines and the player's state.
 
     @gl.public.view
     def get_profile(self, address: str) -> str:
+        address = self._key(address)
         return self.players[address] if address in self.players else ""
 
     @gl.public.view
     def get_player_state(self, address: str) -> str:
+        address = self._key(address)
         return self.player_states[address] if address in self.player_states else ""
 
     @gl.public.view
     def get_build_tile(self, address: str, x: int, y: int) -> str:
+        address = self._key(address)
         key = self._coord_key(address, int(x), int(y))
         return self.build_tiles[key] if key in self.build_tiles else ""
 
@@ -1316,6 +1455,7 @@ The event must follow from the headlines and the player's state.
 
     @gl.public.view
     def get_houses_of(self, address: str) -> str:
+        address = self._key(address)
         return self.owner_houses[address] if address in self.owner_houses else "[]"
 
     @gl.public.view
@@ -1324,10 +1464,12 @@ The event must follow from the headlines and the player's state.
 
     @gl.public.view
     def is_registered(self, address: str) -> bool:
+        address = self._key(address)
         return address in self.players
 
     @gl.public.view
     def get_registered_at(self, address: str) -> str:
+        address = self._key(address)
         return str(self.registered_at[address]) if address in self.registered_at else "0"
 
     @gl.public.view

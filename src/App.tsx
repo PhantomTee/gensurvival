@@ -150,16 +150,37 @@ function App() {
       void chainRef.current.doFishTile(x, y)
     }) as EventListener
 
+    const handleGroundItem = ((e: CustomEvent) => {
+      const { x, y } = e.detail as { x: number; y: number }
+      void chainRef.current.doClaimGroundItem(x, y)
+    }) as EventListener
+
+    const handleCatchChicken = ((e: CustomEvent) => {
+      const { x, y } = e.detail as { x: number; y: number }
+      void chainRef.current.doCatchChicken(x, y)
+    }) as EventListener
+
+    const handleBreakTile = ((e: CustomEvent) => {
+      const { x, y } = e.detail as { x: number; y: number }
+      void chainRef.current.doBreakBuildTile(x, y)
+    }) as EventListener
+
     window.addEventListener('gensurvival:mineTile', handleMineTile)
     window.addEventListener('gensurvival:chopTree', handleChopTree)
     window.addEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
     window.addEventListener('gensurvival:fishAction', handleFishAction)
+    window.addEventListener('gensurvival:claimGroundItem', handleGroundItem)
+    window.addEventListener('gensurvival:catchChicken', handleCatchChicken)
+    window.addEventListener('gensurvival:breakBuildTile', handleBreakTile)
 
     return () => {
       window.removeEventListener('gensurvival:mineTile', handleMineTile)
       window.removeEventListener('gensurvival:chopTree', handleChopTree)
       window.removeEventListener('gensurvival:placeBuildTile', handlePlaceBuild)
       window.removeEventListener('gensurvival:fishAction', handleFishAction)
+      window.removeEventListener('gensurvival:claimGroundItem', handleGroundItem)
+      window.removeEventListener('gensurvival:catchChicken', handleCatchChicken)
+      window.removeEventListener('gensurvival:breakBuildTile', handleBreakTile)
     }
   }, [])
 

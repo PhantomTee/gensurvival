@@ -4,6 +4,9 @@ import { CHUNK_SIZE } from '../constants'
 /** Manages which chunks are currently loaded in memory */
 export class ChunkManager {
   private chunks: Map<string, GeneratedChunk> = new Map()
+  /** Chunks the player has altered. Never evicted: regenerating one would undo
+   *  mined rock and placed tiles, and saveWorld only serialises what is loaded. */
+  private dirty: Set<string> = new Set()
   private generator: WorldGenerator
 
   constructor(generator: WorldGenerator) {
@@ -39,6 +42,7 @@ export class ChunkManager {
     const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE
     const chunk = this.getOrGenerate(cx, cy)
     chunk.tiles[ly * CHUNK_SIZE + lx] = index
+    this.dirty.add(this.key(cx, cy))
   }
 
   /** Pre-generate chunks around a centre chunk position */
@@ -50,9 +54,10 @@ export class ChunkManager {
     }
   }
 
-  /** Unload chunks outside of range to free memory */
+  /** Unload untouched chunks outside of range to free memory. */
   evict(centerCX: number, centerCY: number, keepRadius: number): void {
     for (const key of this.chunks.keys()) {
+      if (this.dirty.has(key)) continue   // player-modified: keep and save it
       const [cx, cy] = key.split(',').map(Number)
       if (Math.abs(cx - centerCX) > keepRadius || Math.abs(cy - centerCY) > keepRadius) {
         this.chunks.delete(key)
@@ -71,6 +76,8 @@ export class ChunkManager {
 
   /** Restore chunks from saved data */
   restore(data: Record<string, number[]>): void {
+    // Restored chunks carry player edits by definition.
+    for (const key of Object.keys(data)) this.dirty.add(key)
     for (const [k, tiles] of Object.entries(data)) {
       const existing = this.chunks.get(k)
       if (existing) {
