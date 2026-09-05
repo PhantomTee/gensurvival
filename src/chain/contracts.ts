@@ -67,7 +67,34 @@ async function writeContract(
     throw new Error(errText)
   }
 
-  return receipt.returnValue
+  return extractReturnValue(receipt)
+}
+
+/**
+ * Pull a write's return value out of the receipt.
+ *
+ * `receipt.returnValue` is undefined on studionet — the value actually sits at
+ * consensus_data.leader_receipt[0].result.payload.readable, as a JSON-encoded
+ * string. Reading the wrong field meant every write that returns data resolved
+ * to undefined, and callers doing JSON.parse(undefined) reported a JSON error
+ * for a transaction that had in fact succeeded.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractReturnValue(receipt: any): unknown {
+  if (receipt?.returnValue !== undefined) return receipt.returnValue
+
+  const leader = receipt?.consensus_data?.leader_receipt?.[0]
+    ?? receipt?.consensus_data?.leader_receipt
+  const readable = leader?.result?.payload?.readable
+  if (readable === undefined) return undefined
+
+  if (typeof readable === 'string') {
+    // `readable` is the *representation* of the value, so a returned string
+    // arrives quoted and escaped. Unwrap one level; leave it alone if it is
+    // not itself JSON.
+    try { return JSON.parse(readable) } catch { return readable }
+  }
+  return readable
 }
 
 export interface PlayerChainState {

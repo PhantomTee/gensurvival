@@ -103,6 +103,7 @@ export class WorldScene extends Phaser.Scene {
   private spawnedChunks = new Set<string>()
   private lastEntityChunkX = Number.NaN
   private lastEntityChunkY = Number.NaN
+  private fishSurfaceCooldownMs = 0
   private lastEvictChunkX = Number.NaN
   private lastEvictChunkY = Number.NaN
 
@@ -408,6 +409,50 @@ export class WorldScene extends Phaser.Scene {
     this.showHint(bonus > 0 ? `+${total} ${name}  (${era!.era_name})` : `+${total} ${name}`, '#88ff88')
   }
 
+  /**
+   * Fish break the surface near the player from time to time.
+   *
+   * Water was silent and static, so a lake gave no sign it held anything and
+   * fishing beside one felt arbitrary. The fish sprite already shipped and was
+   * never used.
+   */
+  private tickSurfacingFish(dt: number): void {
+    this.fishSurfaceCooldownMs -= dt
+    if (this.fishSurfaceCooldownMs > 0) return
+    this.fishSurfaceCooldownMs = 900 + Math.random() * 1600
+
+    // Look for water a short way from the player, so the splash is visible.
+    const ptx = Math.floor(this.player.x / TILE_SIZE)
+    const pty = Math.floor(this.player.y / TILE_SIZE)
+    const candidates: Array<[number, number]> = []
+    for (let dy = -7; dy <= 7; dy++) {
+      for (let dx = -10; dx <= 10; dx++) {
+        if (Math.abs(dx) < 2 && Math.abs(dy) < 2) continue
+        if (TILE_BY_INDEX[this.chunks.getTileIndex(ptx + dx, pty + dy)] === 'WATER') {
+          candidates.push([ptx + dx, pty + dy])
+        }
+      }
+    }
+    if (candidates.length === 0) return
+
+    const [wx, wy] = candidates[Math.floor(Math.random() * candidates.length)]
+    const x = wx * TILE_SIZE + TILE_SIZE / 2
+    const y = wy * TILE_SIZE + TILE_SIZE / 2
+
+    const fish = this.add.image(x, y + 3, 'fish').setDepth(2).setScale(0.7).setAlpha(0)
+    this.tweens.add({
+      targets: fish,
+      y: y - 5,
+      alpha: 1,
+      angle: Math.random() < 0.5 ? -25 : 25,
+      duration: 260,
+      ease: 'Quad.easeOut',
+      yoyo: true,
+      hold: 90,
+      onComplete: () => fish.destroy(),
+    })
+  }
+
   private evictDistantChunks(): void {
     const cx = Math.floor(this.player.x / (CHUNK_SIZE * TILE_SIZE))
     const cy = Math.floor(this.player.y / (CHUNK_SIZE * TILE_SIZE))
@@ -440,6 +485,14 @@ export class WorldScene extends Phaser.Scene {
         this.spawnedChunks.add(chunkKey)
         const chunk = this.chunks.getOrGenerate(cx, cy)
         for (const spawn of chunk.spawns) {
+          // Spawn lists are decided when a chunk is generated, but tiles can
+          // differ by the time we place anything — restore() overwrites tiles
+          // while keeping the generated spawns, and worldgen tuning shifts the
+          // water line. Re-check now, or trees grow out of lakes and chickens
+          // stand in them.
+          const spawnTile = TILE_BY_INDEX[this.chunks.getTileIndex(spawn.tileX, spawn.tileY)] ?? 'VOID'
+          if (TILES[spawnTile]?.solid) continue
+
           const spx = spawn.tileX * TILE_SIZE + TILE_SIZE / 2
           const spy = spawn.tileY * TILE_SIZE + TILE_SIZE / 2
           switch (spawn.type) {
@@ -535,6 +588,7 @@ export class WorldScene extends Phaser.Scene {
 
     // ── Tree respawn countdown ───────────────────────────────────────────────
     this.tickTreeRespawn(dt)
+    this.tickSurfacingFish(dt)
 
     // ── Ground item respawn (5 min after pickup) ─────────────────────────────
     this.tickGroundItemRespawn(dt)
@@ -952,22 +1006,30 @@ export class WorldScene extends Phaser.Scene {
     {
       const inv = this.player.components.inventory!
       const eq  = inv.hotbar[inv.hotbarIndex]
-      if (eq === 'FISHING_ROD' && this.fishingCooldownMs <= 0) {
-        const mv = this.player.components.movement!
-        const offsets: Record<string, [number, number]> = {
-          right:[TILE_SIZE,0], left:[-TILE_SIZE,0], down:[0,TILE_SIZE], up:[0,-TILE_SIZE],
-        }
-        const [ox, oy] = offsets[mv.facing]
-        const ftx = Math.floor((this.player.x + ox) / TILE_SIZE)
-        const fty = Math.floor((this.player.y + oy) / TILE_SIZE)
-        const tid = TILE_BY_INDEX[this.chunks.getTileIndex(ftx, fty)]
-        if (tid === 'WATER') {
-          this.fishingCooldownMs = 8000
-          const catchRoll = Math.random()
-          const caught = catchRoll < 0.6 ? 'FISH' : catchRoll < 0.8 ? 'WOOD_STICK' : 'STONE'
-          this.grantGathered(caught as ItemId, 1)
+
+      // Any adjacent water will do. Requiring the player to face the exact
+      // tile meant standing on a shoreline and pressing K did nothing, with
+      // nothing on screen explaining why.
+      const ptx = Math.floor(this.player.x / TILE_SIZE)
+      const pty = Math.floor(this.player.y / TILE_SIZE)
+      const nearWater = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]
+        .some(([dx, dy]) =>
+          TILE_BY_INDEX[this.chunks.getTileIndex(ptx + dx, pty + dy)] === 'WATER')
+
+      if (nearWater) {
+        if (eq !== 'FISHING_ROD') {
+          this.showHint('Equip a fishing rod to fish here', '#88ccff')
           return
         }
+        if (this.fishingCooldownMs > 0) {
+          this.showHint(`Line still settling... ${Math.ceil(this.fishingCooldownMs / 1000)}s`, '#88ccff')
+          return
+        }
+        this.fishingCooldownMs = 8000
+        const catchRoll = Math.random()
+        const caught = catchRoll < 0.6 ? 'FISH' : catchRoll < 0.8 ? 'WOOD_STICK' : 'STONE'
+        this.grantGathered(caught as ItemId, 1)
+        return
       }
     }
 
