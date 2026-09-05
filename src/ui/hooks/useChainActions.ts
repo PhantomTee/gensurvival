@@ -15,7 +15,7 @@
 import { useCallback, useMemo } from 'react'
 import { useGameStore } from '../store'
 import { createWriteClient } from '../../chain/client'
-import { flush } from '../../chain/actionQueue'
+import { enqueue, flush } from '../../chain/actionQueue'
 import {
   craftItem,
   mintHouse,
@@ -75,6 +75,52 @@ export function useChainActions() {
         .catch(() => { /* best-effort */ })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
+
+      // A station standing in the world is not proof the chain knows about it.
+      // Redeploying wipes build_tiles, so a bench placed before the current
+      // contract exists on screen and nowhere else — and the craft is rejected
+      // for a reason the player cannot see or act on. Re-place it and retry
+      // once, rather than making them work out what happened.
+      const stationMissing = msg.includes('Station not placed on-chain')
+        || msg.includes('Wrong on-chain station type')
+
+      if (stationMissing && station !== 'HAND') {
+        const s2 = useGameStore.getState()
+        const held = s2.playerStats?.inventory?.[station] ?? 0
+        if (held > 0) {
+          try {
+            s2.setTxStatus(true, `Re-registering your ${station.toLowerCase()}...`)
+            enqueue({ kind: 'place', x: s2.craftingStationX, y: s2.craftingStationY, item: station })
+            await flush()
+
+            useGameStore.getState().setTxStatus(true, 'Retrying the forge...')
+            const client2 = createWriteClient(s2.walletAddress!)
+            const delta2 = await craftItem(
+              client2, recipeId, station, quantity, s2.craftingStationX, s2.craftingStationY)
+
+            window.dispatchEvent(new CustomEvent('gensurvival:craftDelta', { detail: delta2 }))
+            useGameStore.getState().closeCrafting()
+            useGameStore.getState().setTxStatus(false, '')
+            const made = Object.entries(delta2.grant)
+              .map(([id, n]) => `${n}x ${id.replace(/_/g, ' ')}`).join(', ')
+            toast.success(`Forged: ${made}`)
+            return
+          } catch (retryErr: unknown) {
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+            useGameStore.getState().setTxStatus(false, '')
+            toast.error(`Forge failed: ${retryMsg}`)
+            return
+          }
+        }
+
+        useGameStore.getState().setTxStatus(false, '')
+        toast.error(
+          `Your ${station.toLowerCase()} isn't on this contract yet, and you have no spare ` +
+          `to re-place. Craft one and place it again.`,
+        )
+        return
+      }
+
       useGameStore.getState().setTxStatus(false, '')
       toast.error(`Forge failed: ${msg}`)
     }
