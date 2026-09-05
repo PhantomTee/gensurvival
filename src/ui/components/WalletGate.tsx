@@ -145,7 +145,10 @@ function SignInPanel({ connecting }: { connecting: boolean }) {
 }
 
 function NamePanel({ connecting }: { connecting: boolean }) {
-  const [name, setName] = useState('')
+  // Prefill from the pending session so a player rejoining after a redeploy
+  // confirms the name they already had rather than inventing a new one.
+  const pendingName = useGameStore.getState().walletPending?.name ?? ''
+  const [name, setName] = useState(pendingName)
 
   return (
     <Card>

@@ -174,7 +174,10 @@ export class WorldScene extends Phaser.Scene {
     const spawn = this.findClearSpawnNear(roughTX, roughTY)
 
     // ── Player ───────────────────────────────────────────────────
-    const savedPlayer = savedWorld ? loadPlayer(store.walletAddress) : null
+    // Load the player independently of the world. Bumping WORLD_SAVE_VERSION
+    // invalidates saved terrain, and coupling these meant it also threw away a
+    // perfectly good inventory, position and XP.
+    const savedPlayer = loadPlayer(store.walletAddress)
     const savedTileX = savedPlayer ? Math.floor(savedPlayer.x / TILE_SIZE) : 0
     const savedTileY = savedPlayer ? Math.floor(savedPlayer.y / TILE_SIZE) : 0
     const savedIsClear = savedPlayer ? this.isClearSpawnTile(savedTileX, savedTileY) : false
@@ -290,15 +293,22 @@ export class WorldScene extends Phaser.Scene {
     window.addEventListener('gensurvival:textInputFocus', this.textInputFocusHandler)
 
     this.hydrateChainStateHandler = ((e: CustomEvent) => {
+      // Merge, never clear. Raw materials are gathered client-side and are not
+      // on the chain, so clearing and repopulating from chain state erased
+      // every log, stone and ore the player had on each refresh. The chain is
+      // the authority for crafted goods; the local save is the authority for
+      // raw ones, and neither may overwrite the other's half.
       const state = e.detail as { inventory?: Record<string, number>; xp?: number; days_survived?: number }
       const inv = this.player.components.inventory!
-      inv.items.clear()
       for (const [id, count] of Object.entries(state.inventory ?? {})) {
-        if (count > 0) addItem(inv, id as ItemId, count)
+        const held = inv.items.get(id as ItemId) ?? 0
+        if (count > held) addItem(inv, id as ItemId, count - held)
       }
-      if (typeof state.xp === 'number') this.player.components.experience!.xp = state.xp
+      if (typeof state.xp === 'number') {
+        this.player.components.experience!.xp = Math.max(
+          this.player.components.experience!.xp, state.xp)
+      }
       this.syncReactStore()
-      this.showHint('Inventory hydrated from chain', '#88ff88')
     }) as EventListener
     window.addEventListener('gensurvival:hydrateChainState', this.hydrateChainStateHandler)
 

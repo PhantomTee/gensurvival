@@ -119,12 +119,19 @@ export function useWallet() {
       }
 
       if (!registered) {
-        // Drop to idle rather than jumping to 'needs-name': WalletGate only
-        // renders on the game screen, so a name prompt raised from here would
-        // never appear. Clearing the session puts the honest "connect" button
-        // back, and connect() runs the registration flow properly.
-        clearSession()
-        toast.info('This world has been reset — reconnect to register again.')
+        // A redeploy wipes every registration, and dropping to the connect
+        // button made that feel like being logged out: reconnect, re-approve,
+        // retype the name. Keep the session, carry the name forward, and open
+        // the gate so re-registering is one click.
+        //
+        // WalletGate only renders on the game screen, so enter it first or the
+        // prompt has nowhere to appear.
+        setWalletPending({ address: session.address, seed: session.seed, name: session.name })
+        setWalletPhase('needs-name')
+        if (useGameStore.getState().screen !== 'game') {
+          window.dispatchEvent(new CustomEvent('gensurvival:startWorld'))
+        }
+        toast.info('The world was rebuilt — confirm your name to rejoin.')
         return
       }
 
@@ -134,7 +141,7 @@ export function useWallet() {
     } catch {
       // Silently fail
     }
-  }, [setWallet, setWalletPhase])
+  }, [setWallet, setWalletPhase, setWalletPending])
 
   useEffect(() => {
     void autoConnect()
