@@ -288,7 +288,7 @@ export class WorldScene extends Phaser.Scene {
     this.textInputFocusHandler = ((e: CustomEvent) => {
       // Only used to drop held keys the moment a field takes focus; whether
       // movement is blocked is decided from the DOM, not from this.
-      if (Boolean(e.detail)) this.heldKeys.clear()
+      if (e.detail) this.heldKeys.clear()
     }) as EventListener
     window.addEventListener('gensurvival:textInputFocus', this.textInputFocusHandler)
 
