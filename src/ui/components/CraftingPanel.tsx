@@ -26,11 +26,17 @@ export function CraftingPanel() {
 
   const available = RECIPES.filter(r => r.station === station)
 
-  function canCraft(r: RecipeDef): boolean {
-    for (const [id, need] of Object.entries(r.inputs)) {
-      if ((stats!.inventory[id] ?? 0) < (need ?? 0) * qty) return false
-    }
-    return true
+  /**
+   * What this recipe costs at the current quantity, and whether each line is
+   * covered. The pills and the FORGE button both read this one list, so the
+   * button can never say yes to something the pills say is short.
+   */
+  function requirements(r: RecipeDef): { id: string; have: number; required: number; ok: boolean }[] {
+    return Object.entries(r.inputs).map(([id, need]) => {
+      const have = stats!.inventory[id] ?? 0
+      const required = (need ?? 0) * qty
+      return { id, have, required, ok: have >= required }
+    })
   }
 
   const stationLabel = station === 'HAND' ? '⚒ CRAFTING' : station === 'BENCH' ? '🪵 BENCH' : '🔥 FURNACE'
@@ -86,7 +92,9 @@ export function CraftingPanel() {
       {/* Recipe list */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 300, overflowY: 'auto' }}>
         {available.map(r => {
-          const craftable = canCraft(r)
+          const reqs      = requirements(r)
+          const missing   = reqs.filter(q => !q.ok)
+          const craftable = missing.length === 0
           const outDef    = ITEMS[r.output]
           return (
             <div key={r.id}
@@ -129,10 +137,7 @@ export function CraftingPanel() {
                 </div>
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {Object.entries(r.inputs).map(([id, need]) => {
-                  const have     = stats.inventory[id] ?? 0
-                  const required = (need ?? 0) * qty
-                  const ok       = have >= required
+                {reqs.map(({ id, have, required, ok }) => {
                   return (
                     <span key={id} style={{
                       fontFamily: "'Press Start 2P', monospace", fontSize: 10,
@@ -141,7 +146,7 @@ export function CraftingPanel() {
                       border: `1px solid ${ok ? '#166534' : '#7f1d1d'}`,
                       color: ok ? '#86efac' : '#fca5a5',
                     }}>
-                      {ITEMS[id as keyof typeof ITEMS]?.displayName.split(' ')[0] ?? id} {have}/{required}
+                      {ITEMS[id as keyof typeof ITEMS]?.displayName ?? id} {have}/{required}
                     </span>
                   )
                 })}
@@ -151,7 +156,15 @@ export function CraftingPanel() {
               {/* FORGE / BUILD button — house recipe gets special label */}
               <button
                 disabled={!craftable || txPending || noWallet}
-                onClick={() => doCraft(r.id, qty, station)}
+                title={craftable
+                  ? undefined
+                  : `Missing ${missing.map(q => `${q.required - q.have} ${ITEMS[q.id as keyof typeof ITEMS]?.displayName ?? q.id}`).join(', ')}`}
+                onClick={() => {
+                  // Belt and braces: a disabled button cannot fire this, but a
+                  // craft must never start from a stale render either.
+                  if (requirements(r).some(q => !q.ok)) return
+                  doCraft(r.id, qty, station)
+                }}
                 style={{
                   padding: '4px 10px',
                   fontFamily: "'Press Start 2P', monospace", fontSize: 8, fontWeight: 'bold',
@@ -173,7 +186,7 @@ export function CraftingPanel() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {r.output === 'HOUSE_DEED' ? '🏠 BUILD' : 'FORGE'}
+                {!craftable ? 'NEED MORE' : r.output === 'HOUSE_DEED' ? '🏠 BUILD' : 'FORGE'}
               </button>
             </div>
           )

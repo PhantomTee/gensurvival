@@ -240,6 +240,7 @@ const KEY_HINTS = [
   { key: 'M', label: 'Map (WASD to pan)' },
   { key: 'K', label: 'Interact / Fish' },
   { key: 'RMB', label: 'Place equipped' },
+  { key: 'C', label: 'Craft (uses nearby bench/furnace)' },
   { key: 'I', label: 'Inventory (click to equip)' },
   { key: 'L', label: 'Leaderboard' },
   { key: 'ESC', label: 'Pause' },
@@ -279,7 +280,11 @@ function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Don't steal keys when Phaser has focus on canvas
-      if (document.activeElement?.tagName === 'INPUT') return
+      // A textarea counts as typing just as much as an input — the house
+      // description is one, and 'c' or 'm' typed into it used to reach the
+      // game and toggle panels mid-sentence.
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       if (e.key === 'i' || e.key === 'I') toggleInv()
       if (e.key === 'l' || e.key === 'L') toggleLB()
     }

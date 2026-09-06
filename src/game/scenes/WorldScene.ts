@@ -249,8 +249,13 @@ export class WorldScene extends Phaser.Scene {
     this.keyESC = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC)
 
     this.keyDownHandler = ((e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === 'INPUT') return
+      // A textarea counts as typing just as much as an input — the house
+      // description is one, and 'c' or 'm' typed into it used to reach the
+      // game and toggle panels mid-sentence.
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       if (e.key.toLowerCase() === 'm' && !e.repeat) this.toggleMap()
+      if (e.key.toLowerCase() === 'c' && !e.repeat) this.toggleCrafting()
       // Keys 1–5 switch hotbar slot
       const slotKey = parseInt(e.key)
       if (!e.repeat && slotKey >= 1 && slotKey <= 5) {
@@ -848,10 +853,8 @@ export class WorldScene extends Phaser.Scene {
     }
 
     if (tileId === 'ROCK' || tileId === 'IRON_ORE' || tileId === 'COAL_ORE') {
-      if (!useGameStore.getState().walletAddress) {
-        this.showHint('Connect wallet to mine on-chain')
-        return
-      }
+      // No wallet check: mining is client-side now, and the old gate told the
+      // player they needed a wallet for something the chain never sees.
       const enMine = this.player.components.energy!
       enMine.value = Math.max(0, enMine.value - 0.30)
       const mineDrop = TILES[tileId].dropItem
@@ -1012,6 +1015,43 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // ─── Interact (K key) ─────────────────────────────────────────────────────
+
+  /**
+   * Open the craft overlay on C, at whichever station the player is standing
+   * next to — walking up to a bench and pressing C should give you the bench
+   * recipes, not the hand ones, since that is what the player can see.
+   */
+  private toggleCrafting(): void {
+    const store = useGameStore.getState()
+    if (store.craftingOpen) { store.closeCrafting(); return }
+
+    const station = this.nearestStation()
+    if (station) {
+      store.openCrafting(station.type, station.id, station.tx, station.ty)
+    } else {
+      store.openCrafting('HAND', -1)
+    }
+  }
+
+  /** The BENCH or FURNACE within interact range, nearest first, or null. */
+  private nearestStation(): { type: 'BENCH' | 'FURNACE'; id: number; tx: number; ty: number } | null {
+    const range = 24
+    let best: { type: 'BENCH' | 'FURNACE'; id: number; tx: number; ty: number } | null = null
+    let bestDist = Infinity
+    for (const e of this.em.all()) {
+      if (e.type !== 'BENCH' && e.type !== 'FURNACE') continue
+      const d = Math.hypot(e.x - this.player.x, e.y - this.player.y)
+      if (d > range || d >= bestDist) continue
+      bestDist = d
+      best = {
+        type: e.type,
+        id: e.id,
+        tx: Math.floor(e.x / TILE_SIZE),
+        ty: Math.floor(e.y / TILE_SIZE),
+      }
+    }
+    return best
+  }
 
   private handleInteract(): void {
     // Fishing: K near water tile with fishing rod equipped

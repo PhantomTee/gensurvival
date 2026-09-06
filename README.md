@@ -52,6 +52,7 @@ fixed list.
 | `K` | Interact / Fish |
 | `RMB` | Place equipped item |
 | `1–5` | Select hotbar slot |
+| `C` | Craft — uses a bench or furnace if you are standing next to one |
 | `I` | Inventory (and IMPROVISE crafting) |
 | `M` | Map (WASD to pan) |
 | `L` | Leaderboard |
